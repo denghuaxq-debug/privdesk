@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark" data-accent="blue">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PrivDesk</title>
+  <link rel="stylesheet" href="assets/icons/bootstrap-icons.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <!-- 标题栏 -->
+    <div class="titlebar" data-tauri-drag-region>
+      <div class="titlebar-left" data-tauri-drag-region>
+        <i class="bi bi-pc-display logo"></i>
+        <span class="app-name">PrivDesk</span>
+      </div>
+      <div class="titlebar-right">
+        <button class="tb-btn" id="btn-theme" title="主题设置"><i class="bi bi-palette"></i></button>
+        <button class="tb-btn" id="btn-min" title="最小化"><i class="bi bi-dash-lg"></i></button>
+        <button class="tb-btn tb-close" id="btn-close" title="关闭到托盘"><i class="bi bi-x-lg"></i></button>
+      </div>
+    </div>
+
+    <!-- 主题设置面板 -->
+    <div id="theme-panel" class="theme-panel hidden">
+      <div class="theme-section">
+        <div class="theme-title">外观模式</div>
+        <div class="theme-modes">
+          <button class="mode-btn" data-theme="dark"><i class="bi bi-moon-stars"></i> 深色</button>
+          <button class="mode-btn" data-theme="black"><i class="bi bi-circle-fill"></i> 纯黑</button>
+          <button class="mode-btn" data-theme="light"><i class="bi bi-sun"></i> 浅色</button>
+        </div>
+      </div>
+      <div class="theme-section">
+        <div class="theme-title">主题色</div>
+        <div class="theme-colors">
+          <button class="color-dot" data-accent="blue"   style="background:#3b82f6" title="蓝色"></button>
+          <button class="color-dot" data-accent="green"  style="background:#10b981" title="绿色"></button>
+          <button class="color-dot" data-accent="purple" style="background:#8b5cf6" title="紫色"></button>
+          <button class="color-dot" data-accent="orange" style="background:#f59e0b" title="橙色"></button>
+          <button class="color-dot" data-accent="pink"   style="background:#ec4899" title="粉色"></button>
+          <button class="color-dot" data-accent="cyan"   style="background:#06b6d4" title="青色"></button>
+          <button class="color-dot" data-accent="dark"   style="background:#334155" title="墨黑"></button>
+          <button class="color-dot" data-accent="black"  style="background:#1a1a1a" title="纯黑"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 主体内容 -->
+    <div class="content">
+
+      <!-- ============ 未连接状态 ============ -->
+      <div id="view-disconnected">
+        <!-- 连接码导入 -->
+        <div class="paste-box">
+          <i class="bi bi-clipboard paste-icon"></i>
+          <input type="text" id="connect-code" placeholder="粘贴连接码可快速填充所有信息" />
+          <button class="btn-import" id="btn-import">导入</button>
+        </div>
+
+        <div class="divider"><span>或手动填写</span></div>
+
+        <!-- 表单 -->
+        <div class="form">
+          <div class="field">
+            <label>服务器地址</label>
+            <input type="text" id="server-addr" placeholder="例如 123.207.251.105" />
+          </div>
+          <div class="field">
+            <label>连接端口</label>
+            <input type="text" id="server-port" value="7000" />
+          </div>
+          <div class="field">
+            <label>认证密钥</label>
+            <div class="input-with-icon">
+              <input type="password" id="token" placeholder="服务端生成的认证密钥" />
+              <button class="icon-btn" id="btn-toggle-token" title="显示/隐藏">
+                <i class="bi bi-eye" id="icon-eye"></i>
+                <i class="bi bi-eye-slash hidden" id="icon-eye-slash"></i>
+              </button>
+            </div>
+          </div>
+          <div class="field">
+            <label>远程端口 <span class="hint">(默认即可,可修改)</span></label>
+            <input type="text" id="remote-port" value="7002" />
+          </div>
+        </div>
+
+        <!-- 远程桌面状态检测 -->
+        <div id="rdp-status" class="rdp-status hidden">
+          <div class="rdp-warn">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span>系统远程桌面未开启,对方将无法连接</span>
+          </div>
+          <button class="btn-enable-rdp" id="btn-enable-rdp">一键开启</button>
+        </div>
+        <div id="rdp-ok" class="rdp-ok hidden">
+          <i class="bi bi-check-circle-fill"></i>
+          <span>远程桌面已开启</span>
+        </div>
+
+        <button class="btn-primary" id="btn-connect">
+          <i class="bi bi-plug-fill btn-icon"></i> 连 接
+        </button>
+
+        <div class="status">
+          <span class="status-dot dot-off" id="status-dot"></span>
+          <span id="status-text">未连接</span>
+        </div>
+      </div>
+
+      <!-- ============ 已连接状态 ============ -->
+      <div id="view-connected" class="hidden">
+        <div class="connected-banner">
+          <i class="bi bi-check-circle-fill check"></i>
+          <span>已连接成功</span>
+        </div>
+
+        <div class="address-box">
+          <div class="address-label">把下面地址发给对方, 即可远程你的电脑:</div>
+          <div class="address-row">
+            <span class="address-text" id="remote-address">123.207.251.105:7002</span>
+            <button class="btn-copy" id="btn-copy">
+              <i class="bi bi-clipboard"></i>
+              <span>复制</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="info-rows">
+          <div class="info-row"><span>连接时长</span><b id="uptime">00:00:00</b></div>
+          <div class="info-row"><span>服务器</span><b id="info-server">123.207.251.105</b></div>
+        </div>
+
+        <button class="btn-danger" id="btn-disconnect">
+          <i class="bi bi-x-octagon-fill btn-icon"></i> 断开连接
+        </button>
+      </div>
+
+    </div>
+
+    <!-- 底部栏 -->
+    <div class="footer">
+      <label class="checkbox" title="勾选后: 开机自动启动并自动连接(无人值守)"><input type="checkbox" id="cb-autostart" /> 开机自启</label>
+      <label class="checkbox"><input type="checkbox" id="cb-tray" checked /> 关闭时最小化</label>
+      <button class="link-btn" id="btn-help">帮助</button>
+    </div>
+  </div>
+
+  <!-- 被拦截引导弹窗 -->
+  <div id="blocked-modal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <i class="bi bi-shield-exclamation"></i>
+        <span>连接组件被安全软件拦截</span>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">PrivDesk 的连接功能被系统或安全软件拦截了。这是远程工具的<b>常见误报</b>(并非病毒),请按下面任一方法放行后重试:</p>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-1-circle-fill"></i> Windows 智能应用控制</div>
+          <div class="guide-text">设置 → 隐私和安全性 → Windows 安全中心 → 应用和浏览器控制 → 智能应用控制 → 选择"关闭"</div>
+        </div>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-2-circle-fill"></i> 360 / 火绒 / 电脑管家</div>
+          <div class="guide-text">打开杀毒软件 → 找到拦截记录 / 信任区 → 把 PrivDesk 添加为"信任"或"允许运行"</div>
+        </div>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-3-circle-fill"></i> Windows Defender</div>
+          <div class="guide-text">Windows 安全中心 → 病毒和威胁防护 → 管理设置 → 排除项 → 添加 PrivDesk 安装目录</div>
+        </div>
+
+        <p class="modal-tip">放行后,回到 PrivDesk 重新点击"连接"即可。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="btn-blocked-close">我知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

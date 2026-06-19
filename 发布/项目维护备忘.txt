@@ -1,0 +1,83 @@
+========================================
+  PrivDesk 项目维护备忘 (给开发者/自己看)
+========================================
+
+【项目结构】
+  C:\PrivDesk\
+  ├── 发布\                          ← 最终交付物(发给用户的)
+  │   ├── 客户端\PrivDesk_1.0.0_安装包.exe
+  │   ├── 客户端\PrivDesk_证书.cer
+  │   ├── 服务端\privdesk-server-installer.tar.gz
+  │   ├── PrivDesk使用说明书.txt
+  │   └── 快速开始.txt
+  ├── client\privdesk-app\           ← 客户端源码(Tauri项目)
+  │   ├── src\                       ← 前端(界面): index.html / styles.css / app.js
+  │   └── src-tauri\                 ← 后端(Rust): src/lib.rs 是核心逻辑
+  └── server\privdesk-server-installer\  ← 服务端脚本源码
+
+
+【技术栈】
+  客户端: Tauri 2 (前端 HTML/CSS/JS + 后端 Rust) + 内置 frpc
+  服务端: bash 脚本 + frps (frp 0.69.1)
+  图标库: Bootstrap Icons (本地, 在 src/assets/icons)
+
+
+【常用操作】
+
+  ▶ 改界面(前端):
+    改 client\privdesk-app\src\ 下的 index.html/styles.css/app.js
+
+  ▶ 改后端逻辑(连接/托盘/检测等):
+    改 client\privdesk-app\src-tauri\src\lib.rs
+
+  ▶ 开发时快速预览(改完前端):
+    cd client\privdesk-app\src-tauri
+    cargo build
+    运行 target\debug\privdesk.exe
+
+  ▶ 正式打包(release + 签名):
+    1. cd client\privdesk-app
+    2. npx tauri build
+    3. 手动签名(用自签名证书):
+       $st = "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe"
+       & $st sign /sha1 "C5DD7D8D9018231A4527BA0AF9683A66EC014D03" /fd sha256 "<exe路径>"
+       (要签: target\release\privdesk.exe 和 安装包 setup.exe)
+
+  ▶ 换图标:
+    1. 准备一张方形 PNG
+    2. cd client\privdesk-app
+    3. npx tauri icon "图标.png"
+    4. 改了图标必须: cargo clean -p privdesk (否则增量编译不会重嵌图标!)
+    5. 重新打包
+
+  ▶ 改服务端脚本后重新打包:
+    1. 改 server\privdesk-server-installer\install.sh
+    2. 注意: Windows 写的脚本要转 LF 换行符 (否则 Linux 报错):
+       PowerShell: 把内容 -replace "`r`n","`n" 用 UTF8(无BOM) 写回
+    3. cd server; tar -czf privdesk-server-installer.tar.gz privdesk-server-installer
+
+
+【关键配置/常量】
+  - 自签名证书指纹: C5DD7D8D9018231A4527BA0AF9683A66EC014D03
+    (在 Cert:\CurrentUser\My, 有效期到 2031)
+  - 应用标识符: com.privdesk.app
+  - 客户端数据目录: %APPDATA%\com.privdesk.app\ (存 frpc.exe/配置/profile.json)
+  - 窗口尺寸: 420 x 640
+  - 默认端口: 连接7000 / 面板7500 / 远程隧道7002
+
+
+【已知限制(重要)】
+  - 自签名证书过不了 Win11"智能应用控制(SAC)", 用户需自行关闭SAC或加白名单
+    (程序已做"被拦截引导弹窗"提示用户怎么放行)
+  - 远控+内网穿透类软件会被杀软误报, 这是品类通病
+  - 正式公开发布需要: EV代码签名证书 + 向各杀软厂商提交白名单申诉
+
+
+【踩过的坑(避免重复)】
+  - 换图标后必须 cargo clean, 否则图标嵌不进 exe
+  - 安装包图标要单独配 nsis.installerIcon, 不会自动跟程序图标
+  - 时间戳服务器(digicert)国内连不上, 签名时不要加时间戳
+  - 强杀 privdesk 进程时, 它启动的 frpc 子进程不会被杀(会残留占端口)
+    正常退出(右键托盘→退出)才会清理 frpc
+  - Windows 图标缓存会骗人, 换图标后看不到变化是缓存, 不是没换成功
+========================================

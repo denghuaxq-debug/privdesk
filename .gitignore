@@ -1,0 +1,36 @@
+# ===== 编译产物 / 依赖 (体积大, 不上传) =====
+**/target/
+**/node_modules/
+*.exe
+*.dll
+
+# ===== frp 二进制 (无后缀, 单独排除) =====
+**/privdesk-server_amd64
+**/privdesk-server_arm64
+**/frpc
+**/frps
+
+# ===== 敏感信息 (不能上传!) =====
+*.cer
+*.pfx
+*.key
+**/connection-info.txt
+**/profile.json
+
+# ===== 打包产物 =====
+*.tar.gz
+**/bundle/
+
+# ===== 图标生成的中间产物 =====
+**/icons/design_*.png
+**/icons/source.png
+
+# ===== 系统/编辑器 =====
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# ===== Rust =====
+Cargo.lock

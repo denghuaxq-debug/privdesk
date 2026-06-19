@@ -1,0 +1,11 @@
+{
+  "name": "privdesk",
+  "version": "1.0.0",
+  "description": "PrivDesk - 私有远程桌面",
+  "scripts": {
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.11.2"
+  }
+}

@@ -1,0 +1,20 @@
+[package]
+name = "privdesk"
+version = "1.0.0"
+description = "PrivDesk - 私有远程桌面"
+authors = ["PrivDesk"]
+edition = "2021"
+
+[lib]
+name = "privdesk_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri-plugin-shell = "2"
+tauri-plugin-autostart = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

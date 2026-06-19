@@ -1,0 +1,19 @@
+========================================
+  PrivDesk 快速开始 (3步)
+========================================
+
+【1】服务器: 上传 服务端/privdesk-server-installer.tar.gz, 然后跑:
+       tar -xzf privdesk-server-installer.tar.gz
+       cd privdesk-server-installer
+       bash install.sh
+     → 得到一个【连接码】
+
+【2】被控电脑: 装 客户端/PrivDesk_1.0.0_安装包.exe
+
+【3】打开 PrivDesk → 粘贴连接码 → 导入 → 连接
+     → 把显示的地址(如 1.2.3.4:7002)发给对方
+     → 对方 Win+R 输入 mstsc, 填这个地址连接
+
+详细说明见: PrivDesk使用说明书.txt
+被安全软件拦截了? 程序会弹窗教你放行, 照做即可。
+========================================
