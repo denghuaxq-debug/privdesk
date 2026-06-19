@@ -21,6 +21,9 @@
 *.tar.gz
 **/bundle/
 
+# ===== 版本归档(走 Gitee 发行版, 不进代码仓库) =====
+/releases/
+
 # ===== 图标生成的中间产物 =====
 **/icons/design_*.png
 **/icons/source.png
