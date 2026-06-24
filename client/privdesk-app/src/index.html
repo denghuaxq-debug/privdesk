@@ -107,6 +107,7 @@
         <div class="status">
           <span class="status-dot dot-off" id="status-dot"></span>
           <span id="status-text">未连接</span>
+          <button class="link-btn log-link hidden" id="btn-view-log" title="查看 frpc 连接日志, 排查失败原因">查看日志</button>
         </div>
       </div>
 
@@ -126,6 +127,12 @@
               <span>复制</span>
             </button>
           </div>
+          <div class="login-hint">
+            <i class="bi bi-person-badge"></i>
+            <span>登录时用户名填: </span>
+            <b id="login-username">—</b>
+            <button class="btn-copy-user" id="btn-copy-user" title="复制用户名"><i class="bi bi-clipboard"></i></button>
+          </div>
         </div>
 
         <div class="info-rows">
@@ -135,6 +142,10 @@
 
         <button class="btn-danger" id="btn-disconnect">
           <i class="bi bi-x-octagon-fill btn-icon"></i> 断开连接
+        </button>
+
+        <button class="link-btn how-link" id="btn-how">
+          <i class="bi bi-question-circle"></i> 对方怎么连接我的电脑?
         </button>
       </div>
 
@@ -177,6 +188,40 @@
       </div>
       <div class="modal-footer">
         <button class="btn-secondary" id="btn-blocked-close">我知道了</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 对方怎么连接 引导弹窗 -->
+  <div id="how-modal" class="modal-overlay hidden">
+    <div class="modal-box">
+      <div class="modal-header">
+        <i class="bi bi-display"></i>
+        <span>对方怎么连接我的电脑</span>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">把下面信息发给对方, 让<b>对方在他自己的 Windows 电脑上</b>按步骤操作:</p>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-1-circle-fill"></i> 打开远程桌面</div>
+          <div class="guide-text">同时按 <b>Win + R</b> 键, 输入 <b>mstsc</b>, 回车</div>
+        </div>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-2-circle-fill"></i> 填入地址</div>
+          <div class="guide-text">在"计算机"框里填: <b id="how-address">—</b></div>
+        </div>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-3-circle-fill"></i> 填用户名和密码</div>
+          <div class="guide-text">点"连接"后, 用户名填: <b id="how-username">—</b><br>密码: 你这台电脑平时开机的登录密码</div>
+        </div>
+
+        <p class="modal-tip">如果对方电脑没有"开机密码", 需要先给你的电脑设置一个登录密码, 否则远程桌面无法登录。</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary" id="btn-how-copy">复制全部发给对方</button>
+        <button class="btn-secondary" id="btn-how-close">我知道了</button>
       </div>
     </div>
   </div>

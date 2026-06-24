@@ -2,11 +2,11 @@
 // 功能: 启动/停止 frpc、真实连接判断、系统托盘、开机自启、关闭到托盘
 
 use std::fs;
-use std::io::{BufRead, BufReader};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use serde::{Deserialize, Serialize};
@@ -42,6 +42,13 @@ fn app_dir(app: &tauri::AppHandle) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
+// 日志目录: %APPDATA%\com.privdesk.app\logs
+fn log_dir(app: &tauri::AppHandle) -> PathBuf {
+    let dir = app_dir(app).join("logs");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
 #[cfg(windows)]
 fn hide_window(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -54,6 +61,15 @@ fn hide_window(_cmd: &mut Command) {}
 enum FrpcEvent {
     Success,
     Failed(String),
+}
+
+// 把一行 frpc 日志追加写入日志文件(线程安全)
+fn write_log_line(log: &Arc<Mutex<Option<fs::File>>>, line: &str) {
+    if let Ok(mut guard) = log.lock() {
+        if let Some(f) = guard.as_mut() {
+            let _ = writeln!(f, "{}", line);
+        }
+    }
 }
 
 // ========== 命令: 连接 ==========
@@ -104,13 +120,13 @@ auth.token = "{}"
 transport.tls.enable = true
 
 [[proxies]]
-name = "RDP"
+name = "RDP-{}"
 type = "tcp"
 localIP = "127.0.0.1"
 localPort = 3389
 remotePort = {}
 "#,
-        params.server, params.port, params.token, params.remote
+        params.server, params.port, params.token, params.remote, params.remote
     );
     let config_path = dir.join("frpc.toml");
     if let Err(e) = fs::write(&config_path, config) {
@@ -154,11 +170,28 @@ remotePort = {}
     }
 
     let (tx, rx) = mpsc::channel::<FrpcEvent>();
+
+    // 打开日志文件(每次连接覆盖, 只保留最近一次尝试的完整日志, 方便排查)
+    // 用 Arc<Mutex> 让 stdout / stderr 两个线程共享同一个写入句柄
+    let log_path = log_dir(&app).join("frpc.log");
+    let log_file: Arc<Mutex<Option<fs::File>>> = Arc::new(Mutex::new(
+        fs::File::create(&log_path).ok().map(|mut f| {
+            let header = format!(
+                "PrivDesk 连接日志\n服务器: {}:{}  远程端口: {}\n----------------------------------------\n",
+                params.server, params.port, params.remote
+            );
+            let _ = f.write_all(header.as_bytes());
+            f
+        }),
+    ));
+
     if let Some(stdout) = child.stdout.take() {
         let tx2 = tx.clone();
+        let log = Arc::clone(&log_file);
         thread::spawn(move || {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
+                write_log_line(&log, &line);
                 let l = line.to_lowercase();
                 if l.contains("start proxy success") {
                     let _ = tx2.send(FrpcEvent::Success);
@@ -171,9 +204,13 @@ remotePort = {}
                         "认证失败, 请检查认证密钥是否正确".into(),
                     ));
                     break;
+                } else if l.contains("proxy") && l.contains("already exists") {
+                    let _ = tx2.send(FrpcEvent::Failed(
+                        "该连接已在别处使用中。请确认这台电脑没有重复连接, 或换一个远程端口重试".into(),
+                    ));
+                    break;
                 } else if l.contains("port already used")
                     || l.contains("already used")
-                    || l.contains("proxy") && l.contains("already exists")
                     || l.contains("port not allowed")
                 {
                     let _ = tx2.send(FrpcEvent::Failed(
@@ -200,9 +237,11 @@ remotePort = {}
     }
     if let Some(stderr) = child.stderr.take() {
         let tx3 = tx.clone();
+        let log = Arc::clone(&log_file);
         thread::spawn(move || {
             let reader = BufReader::new(stderr);
             for line in reader.lines().map_while(Result::ok) {
+                write_log_line(&log, &line);
                 let l = line.to_lowercase();
                 if l.contains("port already used") || l.contains("already used") {
                     let _ = tx3.send(FrpcEvent::Failed(
@@ -449,6 +488,24 @@ Enable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyConti
     }
 }
 
+// ========== 命令: 获取本机 Windows 登录用户名(供远程方填写) ==========
+#[tauri::command]
+fn get_username() -> String {
+    std::env::var("USERNAME").unwrap_or_default()
+}
+
+// ========== 命令: 打开日志文件夹 ==========
+#[tauri::command]
+fn open_log_dir(app: tauri::AppHandle) -> bool {
+    let dir = log_dir(&app);
+    // 用资源管理器打开日志目录
+    let mut cmd = Command::new("explorer");
+    cmd.arg(&dir);
+    hide_window(&mut cmd);
+    // explorer 打开目录时返回码可能非 0, 这里不以状态码判定成功
+    cmd.spawn().is_ok()
+}
+
 fn stop_frpc(state: &tauri::State<AppState>) {
     let mut guard = state.frpc_child.lock().unwrap();
     if let Some(mut child) = guard.take() {
@@ -487,7 +544,9 @@ pub fn run() {
             load_profile,
             update_tray_color,
             check_rdp_enabled,
-            enable_rdp
+            enable_rdp,
+            open_log_dir,
+            get_username
         ])
         .setup(|app| {
             // ---------- 创建系统托盘 ----------

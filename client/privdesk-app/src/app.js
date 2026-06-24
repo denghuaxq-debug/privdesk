@@ -6,6 +6,7 @@ const $ = (id) => document.getElementById(id);
 let uptimeTimer = null;
 let uptimeSeconds = 0;
 let isConnecting = false; // 防止连接中重复点击
+let currentRemoteAddr = ""; // 当前远程地址(给"对方怎么连"弹窗用)
 
 // 安全获取 Tauri invoke (运行时再判断, 避免顶层报错)
 function getInvoke() {
@@ -76,6 +77,12 @@ function bindEvents() {
     copyText(addr);
   });
 
+  // ---------- 复制用户名 ----------
+  $("btn-copy-user").addEventListener("click", () => {
+    const name = $("login-username").textContent;
+    if (name && !name.startsWith("(")) copyText(name);
+  });
+
   // ---------- 标题栏按钮 ----------
   $("btn-min").addEventListener("click", async () => {
     if (inTauri()) {
@@ -104,6 +111,12 @@ function bindEvents() {
     alert("PrivDesk 帮助\n\n1. 在服务端运行安装脚本, 获取连接信息\n2. 把连接码粘贴到这里, 或手动填写\n3. 点击\"连接\"即可\n4. 把生成的远程地址发给对方, 对方用远程桌面连接");
   });
 
+  // ---------- 查看日志 (连接失败时引导) ----------
+  $("btn-view-log").addEventListener("click", () => {
+    const invoke = getInvoke();
+    if (invoke) invoke("open_log_dir").catch((e) => console.error("open_log_dir", e));
+  });
+
   // ---------- 输入/失焦时自动清除错误标记 ----------
   ["server-addr", "server-port", "token", "remote-port"].forEach((id) => {
     $(id).addEventListener("input", () => clearError(id));
@@ -130,6 +143,31 @@ function bindEvents() {
   // ---------- 被拦截引导弹窗关闭 ----------
   $("btn-blocked-close").addEventListener("click", () => {
     $("blocked-modal").classList.add("hidden");
+  });
+
+  // ---------- "对方怎么连"弹窗 ----------
+  $("btn-how").addEventListener("click", () => {
+    const username = $("login-username").textContent;
+    $("how-address").textContent = currentRemoteAddr || "—";
+    $("how-username").textContent = username || "—";
+    $("how-modal").classList.remove("hidden");
+  });
+  $("btn-how-close").addEventListener("click", () => {
+    $("how-modal").classList.add("hidden");
+  });
+  $("btn-how-copy").addEventListener("click", () => {
+    const username = $("login-username").textContent;
+    const text =
+      "【远程连接我的电脑】\n" +
+      "1. 同时按 Win+R, 输入 mstsc 回车\n" +
+      "2. 计算机填: " + (currentRemoteAddr || "") + "\n" +
+      "3. 用户名填: " + (username || "") + "\n" +
+      "4. 密码: 我这台电脑的开机登录密码";
+    copyText(text);
+    const btn = $("btn-how-copy");
+    const old = btn.textContent;
+    btn.textContent = "已复制";
+    setTimeout(() => (btn.textContent = old), 1500);
   });
   $("cb-autostart").addEventListener("change", async (e) => {
     const invoke = getInvoke();
@@ -412,6 +450,9 @@ function setStatus(type, text) {
   if (!dot || !txt) return;
   txt.textContent = text;
   dot.className = "status-dot";
+  // 仅在错误状态显示"查看日志"入口, 其他状态隐藏
+  const logLink = $("btn-view-log");
+  if (logLink) logLink.classList.toggle("hidden", type !== "error");
   if (type === "connecting") {
     dot.classList.add("dot-connecting");
     txt.style.color = "";
@@ -495,12 +536,30 @@ function fallbackCopy(text, done) {
   document.body.removeChild(ta);
 }
 
+// 读取本机 Windows 用户名, 显示在已连接视图里(远程方登录要填)
+async function loadUsername() {
+  const el = $("login-username");
+  if (!el) return;
+  const invoke = getInvoke();
+  if (!invoke) { el.textContent = "(当前电脑用户名)"; return; }
+  try {
+    const name = await invoke("get_username");
+    el.textContent = name && name.trim() ? name : "(读取失败,见电脑登录名)";
+  } catch (e) {
+    console.error("get_username", e);
+    el.textContent = "(读取失败,见电脑登录名)";
+  }
+}
+
 // ---------- 视图切换 ----------
 function showConnected(server, remotePort) {
   $("view-disconnected").classList.add("hidden");
   $("view-connected").classList.remove("hidden");
   $("remote-address").textContent = `${server}:${remotePort}`;
   $("info-server").textContent = server;
+  currentRemoteAddr = `${server}:${remotePort}`;
+  // 显示本机 Windows 用户名, 提示远程方登录时填这个
+  loadUsername();
   // 重置未连接视图的状态栏(下次断开回来是干净的)
   setStatus("off", "未连接");
   uptimeSeconds = 0;
