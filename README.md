@@ -6,9 +6,11 @@
 
 PrivDesk 让你通过自己的云服务器，安全地远程控制自己的电脑。所有数据只经过你自己的服务器，不经过任何第三方。
 
-- **客户端**：Tauri 2 (HTML/CSS/JS + Rust)，Windows 桌面应用
+- **客户端**：Tauri 2 (HTML/CSS/JS + Rust)，Windows 桌面应用 + macOS 桌面应用
 - **服务端**：bash 一键部署脚本 + frps 中转
 - **底层**：基于 frp 内网穿透
+
+> **平台说明**：Windows 被控端转发远程桌面 (RDP 3389)；macOS 被控端转发系统「屏幕共享」(VNC 5900)。服务端、连接码格式完全通用，无需区分平台。
 
 ## 项目结构
 
@@ -24,10 +26,12 @@ server/                   服务端部署脚本
 
 为保持仓库整洁，以下文件**未上传**，需自行补充后才能构建/使用：
 
-- `client/privdesk-app/src-tauri/frpc.exe` — 客户端内置的 frp 客户端
+- `client/privdesk-app/src-tauri/frpc.exe` — 客户端内置的 frp 客户端 (Windows)
+- `client/privdesk-app/src-tauri/frpc` — 客户端内置的 frp 客户端 (macOS, universal)
 - `server/privdesk-server-installer/privdesk-server_amd64` / `_arm64` — 服务端 frps 程序
 
 从 [frp 官方releases](https://github.com/fatedier/frp/releases) 下载 v0.69.1 对应文件即可。
+> macOS 的 `frpc` 需把 `darwin_amd64` 与 `darwin_arm64` 用 `lipo` 合成 universal；GitHub Actions 工作流已自动完成这一步。
 
 ## 构建
 
@@ -37,8 +41,14 @@ server/                   服务端部署脚本
 # 开发
 cd client/privdesk-app/src-tauri && cargo build
 
-# 打包
+# Windows 打包 (在 Windows 上)
 cd client/privdesk-app && npx tauri build
+
+# macOS 打包 (.dmg)
+# 本仓库无需手动操作: push 一个 v* tag 或在 GitHub Actions 手动触发
+# 「Build macOS (.dmg)」工作流, 即在云端 macOS 主机自动产出 universal .dmg。
+# 若手头有 Mac, 也可本地: 先用 lipo 合成 frpc 放到 src-tauri/, 再:
+cd client/privdesk-app && npx tauri build --target universal-apple-darwin
 ```
 
 ## 功能

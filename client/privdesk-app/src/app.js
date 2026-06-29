@@ -7,6 +7,8 @@ let uptimeTimer = null;
 let uptimeSeconds = 0;
 let isConnecting = false; // 防止连接中重复点击
 let currentRemoteAddr = ""; // 当前远程地址(给"对方怎么连"弹窗用)
+let platform = "windows"; // 运行平台: windows / macos / other (启动时探测)
+function isMac() { return platform === "macos"; }
 
 // 安全获取 Tauri invoke (运行时再判断, 避免顶层报错)
 function getInvoke() {
@@ -20,9 +22,52 @@ function inTauri() {
 }
 
 // 等 DOM 就绪后再绑定所有事件
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
+  await detectPlatform();
+  applyPlatformText();
   bindEvents();
 });
+
+// 探测运行平台(失败则保持默认 windows)
+async function detectPlatform() {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  try {
+    const p = await invoke("get_platform");
+    if (p) platform = p;
+  } catch (e) {
+    console.error("get_platform", e);
+  }
+}
+
+// 根据平台切换界面文案(Mac: 屏幕共享/VNC; Windows: 远程桌面/RDP)
+function applyPlatformText() {
+  if (!isMac()) return; // 默认就是 Windows 文案, 仅 Mac 需要替换
+  document.documentElement.setAttribute("data-os", "mac");
+
+  // RDP 状态区 -> 屏幕共享
+  const warn = $("rdp-warn-text");
+  if (warn) warn.textContent = "系统屏幕共享未开启,对方将无法连接";
+  const ok = $("rdp-ok-text");
+  if (ok) ok.textContent = "屏幕共享已开启";
+  const enableBtn = $("btn-enable-rdp");
+  if (enableBtn) enableBtn.textContent = "去开启";
+
+  // "对方怎么连"弹窗: 切换到 Mac 版块
+  toggleHidden("how-win", true);
+  toggleHidden("how-mac", false);
+
+  // 被拦截引导弹窗: 切换到 Mac 版块
+  toggleHidden("blocked-win", true);
+  toggleHidden("blocked-mac", false);
+  const bt = $("blocked-title");
+  if (bt) bt.textContent = "连接组件被系统拦截";
+}
+
+function toggleHidden(id, hidden) {
+  const el = $(id);
+  if (el) el.classList.toggle("hidden", hidden);
+}
 
 function bindEvents() {
   // ---------- 显示/隐藏密钥 ----------
@@ -108,7 +153,10 @@ function bindEvents() {
 
   // ---------- 帮助 ----------
   $("btn-help").addEventListener("click", () => {
-    alert("PrivDesk 帮助\n\n1. 在服务端运行安装脚本, 获取连接信息\n2. 把连接码粘贴到这里, 或手动填写\n3. 点击\"连接\"即可\n4. 把生成的远程地址发给对方, 对方用远程桌面连接");
+    const last = isMac()
+      ? "4. 把生成的远程地址发给对方, 对方用屏幕共享/VNC 连接(地址前加 vnc://)"
+      : "4. 把生成的远程地址发给对方, 对方用远程桌面连接";
+    alert("PrivDesk 帮助\n\n1. 在服务端运行安装脚本, 获取连接信息\n2. 把连接码粘贴到这里, 或手动填写\n3. 点击\"连接\"即可\n" + last);
   });
 
   // ---------- 查看日志 (连接失败时引导) ----------
@@ -148,8 +196,16 @@ function bindEvents() {
   // ---------- "对方怎么连"弹窗 ----------
   $("btn-how").addEventListener("click", () => {
     const username = $("login-username").textContent;
-    $("how-address").textContent = currentRemoteAddr || "—";
-    $("how-username").textContent = username || "—";
+    if (isMac()) {
+      // Mac: 屏幕共享地址带 vnc:// 前缀, 方便 Mac 用户直接"连接服务器"
+      const addrMac = $("how-address-mac");
+      const userMac = $("how-username-mac");
+      if (addrMac) addrMac.textContent = currentRemoteAddr ? ("vnc://" + currentRemoteAddr) : "—";
+      if (userMac) userMac.textContent = username || "—";
+    } else {
+      $("how-address").textContent = currentRemoteAddr || "—";
+      $("how-username").textContent = username || "—";
+    }
     $("how-modal").classList.remove("hidden");
   });
   $("btn-how-close").addEventListener("click", () => {
@@ -157,12 +213,24 @@ function bindEvents() {
   });
   $("btn-how-copy").addEventListener("click", () => {
     const username = $("login-username").textContent;
-    const text =
-      "【远程连接我的电脑】\n" +
-      "1. 同时按 Win+R, 输入 mstsc 回车\n" +
-      "2. 计算机填: " + (currentRemoteAddr || "") + "\n" +
-      "3. 用户名填: " + (username || "") + "\n" +
-      "4. 密码: 我这台电脑的开机登录密码";
+    let text;
+    if (isMac()) {
+      text =
+        "【远程连接我的电脑(Mac 屏幕共享)】\n" +
+        "Mac 用户: 访达 → 前往 → 连接服务器(Command+K), 地址填:\n" +
+        "  vnc://" + (currentRemoteAddr || "") + "\n" +
+        "Windows 用户: 用 RealVNC Viewer, 地址填:\n" +
+        "  " + (currentRemoteAddr || "") + "\n" +
+        "用户名: " + (username || "") + "\n" +
+        "密码: 我这台 Mac 的开机登录密码";
+    } else {
+      text =
+        "【远程连接我的电脑】\n" +
+        "1. 同时按 Win+R, 输入 mstsc 回车\n" +
+        "2. 计算机填: " + (currentRemoteAddr || "") + "\n" +
+        "3. 用户名填: " + (username || "") + "\n" +
+        "4. 密码: 我这台电脑的开机登录密码";
+    }
     copyText(text);
     const btn = $("btn-how-copy");
     const old = btn.textContent;
@@ -298,19 +366,20 @@ async function onEnableRdp() {
   const invoke = getInvoke();
   if (!invoke) return;
   const btn = $("btn-enable-rdp");
+  const restoreText = isMac() ? "去开启" : "一键开启";
   btn.disabled = true;
-  btn.textContent = "开启中...";
+  btn.textContent = isMac() ? "打开设置中..." : "开启中...";
   try {
     await invoke("enable_rdp");
-    // 等待 UAC 授权 + 生效, 再重新检测
+    // 等待 UAC 授权 / 用户在设置里勾选 后再重新检测
     setTimeout(async () => {
       await checkRdp();
       btn.disabled = false;
-      btn.textContent = "一键开启";
+      btn.textContent = restoreText;
     }, 2500);
   } catch (e) {
     btn.disabled = false;
-    btn.textContent = "一键开启";
+    btn.textContent = restoreText;
   }
 }
 

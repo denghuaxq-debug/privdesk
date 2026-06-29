@@ -42,6 +42,30 @@ fn app_dir(app: &tauri::AppHandle) -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("."))
 }
 
+// ---------- 平台相关常量/辅助 ----------
+// Windows: frpc.exe + 转发 RDP(3389)
+// macOS:   frpc    + 转发 屏幕共享/VNC(5900)
+#[cfg(windows)]
+const FRPC_FILENAME: &str = "frpc.exe";
+#[cfg(not(windows))]
+const FRPC_FILENAME: &str = "frpc";
+
+// 被控端本机要转发的本地端口
+#[cfg(windows)]
+const LOCAL_PORT: u16 = 3389; // Windows 远程桌面
+#[cfg(target_os = "macos")]
+const LOCAL_PORT: u16 = 5900; // macOS 屏幕共享(VNC)
+#[cfg(all(not(windows), not(target_os = "macos")))]
+const LOCAL_PORT: u16 = 5900; // 其它类 Unix 也按 VNC 处理
+
+// 当前平台标识(给前端切换文案用)
+#[cfg(windows)]
+const PLATFORM: &str = "windows";
+#[cfg(target_os = "macos")]
+const PLATFORM: &str = "macos";
+#[cfg(all(not(windows), not(target_os = "macos")))]
+const PLATFORM: &str = "other";
+
 // 日志目录: %APPDATA%\com.privdesk.app\logs
 fn log_dir(app: &tauri::AppHandle) -> PathBuf {
     let dir = app_dir(app).join("logs");
@@ -94,10 +118,10 @@ fn connect_blocking(app: tauri::AppHandle, params: ConnectParams) -> ConnectResu
     let dir = app_dir(&app);
     let _ = fs::create_dir_all(&dir);
 
-    let frpc_path = dir.join("frpc.exe");
+    let frpc_path = dir.join(FRPC_FILENAME);
     if !frpc_path.exists() {
         if let Ok(resource) = app.path().resource_dir() {
-            let bundled = resource.join("frpc.exe");
+            let bundled = resource.join(FRPC_FILENAME);
             if bundled.exists() {
                 let _ = fs::copy(&bundled, &frpc_path);
             }
@@ -108,6 +132,17 @@ fn connect_blocking(app: tauri::AppHandle, params: ConnectParams) -> ConnectResu
             ok: false,
             message: "BLOCKED:连接组件丢失,可能被安全软件删除,请将 PrivDesk 加入信任".into(),
         };
+    }
+
+    // 类 Unix(macOS): 确保 frpc 有可执行权限(从资源拷贝出来后可能丢失 x 位)
+    #[cfg(not(windows))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(meta) = fs::metadata(&frpc_path) {
+            let mut perm = meta.permissions();
+            perm.set_mode(0o755);
+            let _ = fs::set_permissions(&frpc_path, perm);
+        }
     }
 
     let config = format!(
@@ -123,10 +158,10 @@ transport.tls.enable = true
 name = "RDP-{}"
 type = "tcp"
 localIP = "127.0.0.1"
-localPort = 3389
+localPort = {}
 remotePort = {}
 "#,
-        params.server, params.port, params.token, params.remote, params.remote
+        params.server, params.port, params.token, params.remote, LOCAL_PORT, params.remote
     );
     let config_path = dir.join("frpc.toml");
     if let Err(e) = fs::write(&config_path, config) {
@@ -437,7 +472,14 @@ fn is_inside_rounded_rect(px: f32, py: f32, w: f32, h: f32, r: f32) -> bool {
     dx * dx + dy * dy <= r * r
 }
 
+// ========== 命令: 当前平台标识(给前端切换文案) ==========
+#[tauri::command]
+fn get_platform() -> String {
+    PLATFORM.to_string()
+}
+
 // ========== 命令: 检测远程桌面(RDP)是否已开启 ==========
+#[cfg(windows)]
 #[tauri::command]
 fn check_rdp_enabled() -> bool {
     // 读取注册表 fDenyTSConnections, 0 表示允许远程桌面
@@ -459,7 +501,25 @@ fn check_rdp_enabled() -> bool {
     }
 }
 
-// ========== 命令: 一键开启远程桌面(需要管理员权限, 会弹UAC) ==========
+// ========== 命令: 检测屏幕共享(VNC 5900)是否已开启 (macOS) ==========
+#[cfg(not(windows))]
+#[tauri::command]
+fn check_rdp_enabled() -> bool {
+    // macOS: 屏幕共享开启后会有进程监听 5900 端口
+    // 用 lsof 检查本机 5900 是否处于监听状态
+    let out = Command::new("lsof")
+        .args(["-nP", "-iTCP:5900", "-sTCP:LISTEN"])
+        .output();
+    if let Ok(o) = out {
+        if o.status.success() && !o.stdout.is_empty() {
+            return true;
+        }
+    }
+    false
+}
+
+// ========== 命令: 一键开启远程桌面(Windows, 需管理员权限会弹UAC) ==========
+#[cfg(windows)]
 #[tauri::command]
 fn enable_rdp() -> ConnectResult {
     // 用 PowerShell 提权执行: 改注册表 + 开防火墙规则
@@ -488,22 +548,68 @@ Enable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyConti
     }
 }
 
-// ========== 命令: 获取本机 Windows 登录用户名(供远程方填写) ==========
+// ========== 命令: 打开"屏幕共享"设置面板 (macOS) ==========
+#[cfg(not(windows))]
+#[tauri::command]
+fn enable_rdp() -> ConnectResult {
+    // macOS 无法可靠地静默开启屏幕共享(涉及系统权限/设密码),
+    // 直接打开"系统设置 → 通用 → 共享"面板, 引导用户手动勾选"屏幕共享"。
+    let r1 = Command::new("open")
+        .arg("x-apple.systempreferences:com.apple.preferences.sharing?Services_ScreenSharing")
+        .status();
+    if matches!(r1, Ok(s) if s.success()) {
+        return ConnectResult {
+            ok: true,
+            message: "已打开共享设置, 请勾选\"屏幕共享\"".into(),
+        };
+    }
+    // 退路: 打开"共享"偏好设置面板
+    match Command::new("open")
+        .arg("/System/Library/PreferencePanes/SharingPref.prefPane")
+        .status()
+    {
+        Ok(_) => ConnectResult {
+            ok: true,
+            message: "已打开共享设置, 请勾选\"屏幕共享\"".into(),
+        },
+        Err(e) => ConnectResult {
+            ok: false,
+            message: format!("无法打开共享设置: {}", e),
+        },
+    }
+}
+
+// ========== 命令: 获取本机登录用户名(供远程方填写) ==========
 #[tauri::command]
 fn get_username() -> String {
-    std::env::var("USERNAME").unwrap_or_default()
+    #[cfg(windows)]
+    {
+        std::env::var("USERNAME").unwrap_or_default()
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("USER").unwrap_or_default()
+    }
 }
 
 // ========== 命令: 打开日志文件夹 ==========
 #[tauri::command]
 fn open_log_dir(app: tauri::AppHandle) -> bool {
     let dir = log_dir(&app);
-    // 用资源管理器打开日志目录
-    let mut cmd = Command::new("explorer");
-    cmd.arg(&dir);
-    hide_window(&mut cmd);
-    // explorer 打开目录时返回码可能非 0, 这里不以状态码判定成功
-    cmd.spawn().is_ok()
+    #[cfg(windows)]
+    {
+        // 用资源管理器打开日志目录
+        let mut cmd = Command::new("explorer");
+        cmd.arg(&dir);
+        hide_window(&mut cmd);
+        // explorer 打开目录时返回码可能非 0, 这里不以状态码判定成功
+        cmd.spawn().is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        // macOS: 用 Finder 打开目录
+        Command::new("open").arg(&dir).spawn().is_ok()
+    }
 }
 
 fn stop_frpc(state: &tauri::State<AppState>) {
@@ -546,7 +652,8 @@ pub fn run() {
             check_rdp_enabled,
             enable_rdp,
             open_log_dir,
-            get_username
+            get_username,
+            get_platform
         ])
         .setup(|app| {
             // ---------- 创建系统托盘 ----------

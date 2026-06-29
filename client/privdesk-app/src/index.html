@@ -91,13 +91,13 @@
         <div id="rdp-status" class="rdp-status hidden">
           <div class="rdp-warn">
             <i class="bi bi-exclamation-triangle-fill"></i>
-            <span>系统远程桌面未开启,对方将无法连接</span>
+            <span id="rdp-warn-text">系统远程桌面未开启,对方将无法连接</span>
           </div>
           <button class="btn-enable-rdp" id="btn-enable-rdp">一键开启</button>
         </div>
         <div id="rdp-ok" class="rdp-ok hidden">
           <i class="bi bi-check-circle-fill"></i>
-          <span>远程桌面已开启</span>
+          <span id="rdp-ok-text">远程桌面已开启</span>
         </div>
 
         <button class="btn-primary" id="btn-connect">
@@ -164,9 +164,10 @@
     <div class="modal-box">
       <div class="modal-header">
         <i class="bi bi-shield-exclamation"></i>
-        <span>连接组件被安全软件拦截</span>
+        <span id="blocked-title">连接组件被安全软件拦截</span>
       </div>
-      <div class="modal-body">
+      <div class="modal-body" id="blocked-body">
+        <div id="blocked-win">
         <p class="modal-desc">PrivDesk 的连接功能被系统或安全软件拦截了。这是远程工具的<b>常见误报</b>(并非病毒),请按下面任一方法放行后重试:</p>
 
         <div class="guide-item">
@@ -185,6 +186,28 @@
         </div>
 
         <p class="modal-tip">放行后,回到 PrivDesk 重新点击"连接"即可。</p>
+        </div>
+
+        <div id="blocked-mac" class="hidden">
+        <p class="modal-desc">macOS 拦截了 PrivDesk 的连接组件。这是未签名应用的<b>常见情况</b>(并非病毒),请按下面方法放行后重试:</p>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-1-circle-fill"></i> 首次打开被拦("已损坏 / 无法验证开发者")</div>
+          <div class="guide-text">在"访达 → 应用程序"里找到 PrivDesk,<b>按住 Control 键点击图标 → 打开</b>,在弹窗里再点"打开"即可。</div>
+        </div>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-2-circle-fill"></i> 仍打不开(提示"已损坏")</div>
+          <div class="guide-text">打开"终端",粘贴执行:<br><b>xattr -dr com.apple.quarantine /Applications/PrivDesk.app</b><br>然后重新打开。</div>
+        </div>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-3-circle-fill"></i> 系统设置里放行</div>
+          <div class="guide-text">系统设置 → 隐私与安全性 → 拉到底,看到 PrivDesk 被阻止 → 点"仍要打开"。</div>
+        </div>
+
+        <p class="modal-tip">放行后,回到 PrivDesk 重新点击"连接"即可。</p>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn-secondary" id="btn-blocked-close">我知道了</button>
@@ -200,8 +223,9 @@
         <span>对方怎么连接我的电脑</span>
       </div>
       <div class="modal-body">
-        <p class="modal-desc">把下面信息发给对方, 让<b>对方在他自己的 Windows 电脑上</b>按步骤操作:</p>
+        <p class="modal-desc">把下面信息发给对方, 让<b>对方在他自己的电脑上</b>按步骤操作:</p>
 
+        <div id="how-win">
         <div class="guide-item">
           <div class="guide-title"><i class="bi bi-1-circle-fill"></i> 打开远程桌面</div>
           <div class="guide-text">同时按 <b>Win + R</b> 键, 输入 <b>mstsc</b>, 回车</div>
@@ -218,6 +242,26 @@
         </div>
 
         <p class="modal-tip">如果对方电脑没有"开机密码", 需要先给你的电脑设置一个登录密码, 否则远程桌面无法登录。</p>
+        </div>
+
+        <div id="how-mac" class="hidden">
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-1-circle-fill"></i> 打开"屏幕共享 / VNC"</div>
+          <div class="guide-text">对方若用 Mac:打开"访达",顶部菜单"前往 → 连接服务器",或直接按 <b>Command + K</b>。<br>对方若用 Windows:下载安装免费的 <b>RealVNC Viewer</b> 并打开。</div>
+        </div>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-2-circle-fill"></i> 填入地址</div>
+          <div class="guide-text">Mac 连接服务器框里填: <b id="how-address-mac">—</b><br>(Windows 的 VNC Viewer 里把开头的 <b>vnc://</b> 去掉再填)</div>
+        </div>
+
+        <div class="guide-item">
+          <div class="guide-title"><i class="bi bi-3-circle-fill"></i> 填用户名和密码</div>
+          <div class="guide-text">用户名填: <b id="how-username-mac">—</b><br>密码: 你这台 Mac 的开机登录密码(或屏幕共享单独设置的密码)</div>
+        </div>
+
+        <p class="modal-tip">需先在这台 Mac 上开启"系统设置 → 通用 → 共享 → 屏幕共享",否则对方无法连接。</p>
+        </div>
       </div>
       <div class="modal-footer">
         <button class="btn-secondary" id="btn-how-copy">复制全部发给对方</button>

@@ -1,0 +1,85 @@
+name: Build macOS (.dmg)
+
+# 在 GitHub 的 macOS 云主机上构建 PrivDesk 的 Mac 安装包 (.dmg)。
+# 触发方式:
+#   1. 手动: Actions 页面点 "Run workflow"
+#   2. 打 tag: 形如 v1.0.0 的 tag 推送后自动构建并发布到 Release
+#
+# 产物为 universal (Intel + Apple 芯片通用) 的未签名 .dmg。
+# 未做苹果签名, 用户首次打开需"右键 → 打开"放行 (详见 发布/Mac端使用说明.txt)。
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: client/privdesk-app
+
+    env:
+      FRP_VERSION: "0.69.1"
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust (含两个 macOS 目标)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: 缓存 Cargo 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/privdesk-app/src-tauri
+
+      - name: 安装 Node 依赖
+        run: npm install
+
+      - name: 下载 frpc 并合成 universal 二进制
+        run: |
+          set -e
+          V="${FRP_VERSION}"
+          base="https://github.com/fatedier/frp/releases/download/v${V}"
+          echo "下载 frp ${V} 的 darwin amd64 / arm64 ..."
+          curl -fL "${base}/frp_${V}_darwin_amd64.tar.gz" -o frp_amd64.tar.gz
+          curl -fL "${base}/frp_${V}_darwin_arm64.tar.gz" -o frp_arm64.tar.gz
+          tar -xzf frp_amd64.tar.gz
+          tar -xzf frp_arm64.tar.gz
+          # 用 lipo 把两个架构合成一个通用可执行文件
+          lipo -create -output src-tauri/frpc \
+            "frp_${V}_darwin_amd64/frpc" \
+            "frp_${V}_darwin_arm64/frpc"
+          chmod +x src-tauri/frpc
+          echo "已生成 universal frpc:"
+          lipo -info src-tauri/frpc
+
+      - name: 构建 PrivDesk (universal .dmg)
+        run: npx tauri build --target universal-apple-darwin
+
+      - name: 收集产物
+        run: |
+          mkdir -p ../../dist-mac
+          find src-tauri/target/universal-apple-darwin/release/bundle/dmg -name "*.dmg" -exec cp {} ../../dist-mac/ \;
+          ls -lh ../../dist-mac
+
+      - name: 上传构建工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrivDesk-macOS-dmg
+          path: dist-mac/*.dmg
+          if-no-files-found: error
+
+      - name: 发布到 Release (仅打 tag 时)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-mac/*.dmg
