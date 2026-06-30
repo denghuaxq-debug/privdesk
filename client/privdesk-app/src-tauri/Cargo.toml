@@ -18,3 +18,6 @@ tauri-plugin-shell = "2"
 tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# 锁定间接依赖 time 版本: 0.3.52 对 Parsable::parse 做了破坏性改动,
+# 导致 tauri 依赖的 cookie 0.18.1 编译失败 (E0061)。锁到 0.3.51 规避。
+time = "=0.3.51"
