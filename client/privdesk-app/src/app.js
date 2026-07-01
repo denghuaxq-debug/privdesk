@@ -269,8 +269,8 @@ async function initAutostart() {
 
 // ========== 主题切换 ==========
 function initTheme() {
-  // 读取保存的主题(默认: 深色 + 蓝色)
-  const theme = localStorage.getItem("pd-theme") || "dark";
+  // 读取保存的主题(默认: 纯黑 + 蓝色)
+  const theme = localStorage.getItem("pd-theme") || "black";
   const accent = localStorage.getItem("pd-accent") || "blue";
   applyTheme(theme, accent);
 
