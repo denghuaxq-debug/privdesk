@@ -269,9 +269,9 @@ async function initAutostart() {
 
 // ========== 主题切换 ==========
 function initTheme() {
-  // 读取保存的主题(默认: 纯黑 + 蓝色)
+  // 读取保存的主题(默认: 纯黑 + 纯黑)
   const theme = localStorage.getItem("pd-theme") || "black";
-  const accent = localStorage.getItem("pd-accent") || "blue";
+  const accent = localStorage.getItem("pd-accent") || "black";
   applyTheme(theme, accent);
 
   // 主题按钮: 打开/关闭面板
