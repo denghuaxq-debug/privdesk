@@ -63,3 +63,5 @@ cd client/privdesk-app && npx tauri build --target universal-apple-darwin
 
 ---
 本项目基于 [frp](https://github.com/fatedier/frp) (Apache 2.0) 构建。
+
+PRIVDESK-eyJzZXJ2ZXIiOiIxMjMuMjA3LjI1MS4xMDUiLCJwb3J0IjoiNjAwMCIsInRva2VuIjoiZ0o1Z2lPYXU1NjJzSVF2VXpJSWpCUWF2R1ZQUXltaCIsInJlbW90ZSI6Ijk2ODAifQ==
