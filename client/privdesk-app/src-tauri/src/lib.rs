@@ -501,16 +501,48 @@ fn check_rdp_enabled() -> bool {
     }
 }
 
+// 用 netstat 检查本机某端口是否处于 TCP LISTEN 状态 (类 Unix / macOS)
+// 说明:
+//   1. GUI 启动的 .app 不继承 shell 的 PATH, 故用绝对路径 /usr/bin/netstat。
+//   2. macOS 屏幕共享服务 screensharingd 以 root 身份监听 5900,
+//      普通用户用 `lsof -i` 看不到 root 拥有的 socket, 会误判为未开启;
+//      而 `netstat -an` 无需权限即可列出全系统所有监听端口, 更可靠。
+#[cfg(not(windows))]
+fn port_listening(port: u16) -> bool {
+    let suffix = format!(".{}", port); // 本地地址列形如 *.5900 / 127.0.0.1.5900
+    if let Ok(o) = Command::new("/usr/bin/netstat")
+        .args(["-an", "-p", "tcp"])
+        .output()
+    {
+        let s = String::from_utf8_lossy(&o.stdout);
+        for line in s.lines() {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            // 列: Proto Recv-Q Send-Q Local-Address Foreign-Address (state)
+            if cols.last() == Some(&"LISTEN") {
+                if let Some(local) = cols.get(3) {
+                    if local.ends_with(&suffix) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
 // ========== 命令: 检测屏幕共享(VNC 5900)是否已开启 (macOS) ==========
 #[cfg(not(windows))]
 #[tauri::command]
 fn check_rdp_enabled() -> bool {
-    // macOS: 屏幕共享开启后会有进程监听 5900 端口
-    // 用 lsof 检查本机 5900 是否处于监听状态
-    let out = Command::new("lsof")
+    // 主检测: netstat 列出全系统监听端口(不受属主/权限限制)
+    if port_listening(LOCAL_PORT) {
+        return true;
+    }
+    // 退路: lsof(绝对路径, 避免 GUI 无 PATH 找不到命令)
+    if let Ok(o) = Command::new("/usr/sbin/lsof")
         .args(["-nP", "-iTCP:5900", "-sTCP:LISTEN"])
-        .output();
-    if let Ok(o) = out {
+        .output()
+    {
         if o.status.success() && !o.stdout.is_empty() {
             return true;
         }
