@@ -501,16 +501,32 @@ fn check_rdp_enabled() -> bool {
     }
 }
 
-// 用 netstat 检查本机某端口是否处于 TCP LISTEN 状态 (类 Unix / macOS)
-// 说明:
-//   1. GUI 启动的 .app 不继承 shell 的 PATH, 故用绝对路径 /usr/bin/netstat。
-//   2. macOS 屏幕共享服务 screensharingd 以 root 身份监听 5900,
-//      普通用户用 `lsof -i` 看不到 root 拥有的 socket, 会误判为未开启;
-//      而 `netstat -an` 无需权限即可列出全系统所有监听端口, 更可靠。
+// 用 TCP 连接判断本机某端口是否处于监听状态 (类 Unix / macOS)
+// 说明: 这是最可靠的方式 —— 完全不依赖外部命令(不受 GUI 无 PATH 影响)、
+//       不受端口属主/权限限制。能建立连接即说明该端口正在被监听。
+//       macOS 屏幕共享开启后, screensharingd 会监听 5900, 本机可直接连上。
 #[cfg(not(windows))]
 fn port_listening(port: u16) -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    // 优先连 IPv4 回环, 再试 IPv6 回环
+    let targets = [
+        SocketAddr::from(([127, 0, 0, 1], port)),
+        SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+    ];
+    for addr in targets {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+// 用 netstat 检查本机某端口是否处于 TCP LISTEN 状态 (退路)
+// macOS 上 netstat 位于 /usr/sbin/netstat, 用绝对路径避免 GUI 无 PATH 找不到。
+#[cfg(not(windows))]
+fn port_listening_netstat(port: u16) -> bool {
     let suffix = format!(".{}", port); // 本地地址列形如 *.5900 / 127.0.0.1.5900
-    if let Ok(o) = Command::new("/usr/bin/netstat")
+    if let Ok(o) = Command::new("/usr/sbin/netstat")
         .args(["-an", "-p", "tcp"])
         .output()
     {
@@ -534,12 +550,16 @@ fn port_listening(port: u16) -> bool {
 #[cfg(not(windows))]
 #[tauri::command]
 fn check_rdp_enabled() -> bool {
-    // 主检测: netstat 列出全系统监听端口(不受属主/权限限制)
+    // 主检测: 直接 TCP 连本机端口(最可靠, 不依赖外部命令/权限)
     if port_listening(LOCAL_PORT) {
         return true;
     }
-    // 退路: lsof(绝对路径, 避免 GUI 无 PATH 找不到命令)
-    if let Ok(o) = Command::new("/usr/sbin/lsof")
+    // 退路 1: netstat 列出全系统监听端口(绝对路径)
+    if port_listening_netstat(LOCAL_PORT) {
+        return true;
+    }
+    // 退路 2: lsof(macOS 位于 /usr/bin/lsof, 绝对路径)
+    if let Ok(o) = Command::new("/usr/bin/lsof")
         .args(["-nP", "-iTCP:5900", "-sTCP:LISTEN"])
         .output()
     {
