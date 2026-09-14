@@ -252,6 +252,9 @@ function bindEvents() {
       }
     }
   });
+
+  // ---------- 控制端: 模式切换 / 系统选择 / 开始远程 ----------
+  initController();
 }
 
 // 启动时读取开机自启的真实状态, 同步到复选框
@@ -269,9 +272,9 @@ async function initAutostart() {
 
 // ========== 主题切换 ==========
 function initTheme() {
-  // 读取保存的主题(默认: 深色 + 蓝色)
-  const theme = localStorage.getItem("pd-theme") || "dark";
-  const accent = localStorage.getItem("pd-accent") || "blue";
+  // 读取保存的主题(默认: 纯黑 + 纯黑主题色)
+  const theme = localStorage.getItem("pd-theme") || "black";
+  const accent = localStorage.getItem("pd-accent") || "black";
   applyTheme(theme, accent);
 
   // 主题按钮: 打开/关闭面板
@@ -293,14 +296,14 @@ function initTheme() {
   // 外观模式按钮
   document.querySelectorAll(".mode-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const a = localStorage.getItem("pd-accent") || "blue";
+      const a = localStorage.getItem("pd-accent") || "black";
       applyTheme(btn.dataset.theme, a);
     });
   });
   // 主题色按钮
   document.querySelectorAll(".color-dot").forEach((btn) => {
     btn.addEventListener("click", () => {
-      const t = localStorage.getItem("pd-theme") || "dark";
+      const t = localStorage.getItem("pd-theme") || "black";
       applyTheme(t, btn.dataset.accent);
     });
   });
@@ -653,3 +656,462 @@ function formatTime(sec) {
   const s = String(sec % 60).padStart(2, "0");
   return `${h}:${m}:${s}`;
 }
+
+// ============ 控制端(远程别人) ============
+let ctrlOs = "mac"; // 当前选择: mac(VNC) / win(RDP)
+let isRemoting = false; // 防重复点击
+
+function initController() {
+  // ---- 模式切换 ----
+  document.querySelectorAll(".mode-tab").forEach((tab) => {
+    tab.addEventListener("click", () => switchMode(tab.dataset.mode));
+  });
+
+  // ---- 系统选择 (Mac / Windows) ----
+  document.querySelectorAll(".os-btn").forEach((btn) => {
+    btn.addEventListener("click", () => setCtrlOs(btn.dataset.os));
+  });
+
+  // ---- 显示/隐藏密码 ----
+  $("ctrl-toggle-pw").addEventListener("click", () => {
+    const input = $("ctrl-password");
+    const showing = input.type === "password";
+    input.type = showing ? "text" : "password";
+    $("ctrl-icon-eye").classList.toggle("hidden", !showing);
+    $("ctrl-icon-eye-slash").classList.toggle("hidden", showing);
+  });
+
+  // ---- 开始远程 ----
+  $("btn-remote").addEventListener("click", onRemote);
+
+  // ---- 控制端帮助弹窗 ----
+  $("btn-ctrl-help").addEventListener("click", () => {
+    $("ctrl-help-modal").classList.remove("hidden");
+  });
+  $("btn-ctrl-help-close").addEventListener("click", () => {
+    $("ctrl-help-modal").classList.add("hidden");
+  });
+
+  // ---- 清空历史 ----
+  $("btn-clear-history").addEventListener("click", clearHistory);
+
+  // ---- 地址输入时清错误 ----
+  $("ctrl-address").addEventListener("input", () => clearError("ctrl-address"));
+
+  // ---- 渲染最近远程记录 ----
+  renderHistory();
+  applyCtrlOsUi();
+
+  // ---- 初始化共享上网 ----
+  initProxy();
+}
+
+// 切换 被控/控制/共享上网 三个模式视图
+function switchMode(mode) {
+  const modes = ["controlled", "controller", "proxy"];
+  const m = modes.includes(mode) ? mode : "controlled";
+  $("mode-controlled").classList.toggle("hidden", m !== "controlled");
+  $("mode-controller").classList.toggle("hidden", m !== "controller");
+  $("mode-proxy").classList.toggle("hidden", m !== "proxy");
+  $("tab-controlled").classList.toggle("active", m === "controlled");
+  $("tab-controller").classList.toggle("active", m === "controller");
+  $("tab-proxy").classList.toggle("active", m === "proxy");
+  // 进入共享上网时刷新一次(检查服务器信息/运行状态)
+  if (m === "proxy") refreshProxyView();
+}
+
+// 根据选择的对方系统, 调整密码提示文案
+function applyCtrlOsUi() {
+  const hint = $("ctrl-pw-hint");
+  const pwField = $("ctrl-pw-field");
+  if (ctrlOs === "mac") {
+    if (hint) hint.textContent = "(对方 Mac 的屏幕共享/VNC 密码)";
+    if (pwField) pwField.style.display = "";
+  } else {
+    // Windows RDP: 填了用户名+密码可直接登录; 密码留空则连上后在弹窗里补输
+    if (hint) hint.textContent = "(填密码可直接登录; 留空则在弹窗里补输)";
+    if (pwField) pwField.style.display = "";
+  }
+}
+
+async function onRemote() {
+  if (isRemoting) return;
+
+  const address = $("ctrl-address").value.trim();
+  if (!address) {
+    markError("ctrl-address");
+    $("ctrl-address").focus();
+    return;
+  }
+  // 简单校验 IP:端口 形式
+  if (!/^.+:\d{1,5}$/.test(address)) {
+    markError("ctrl-address");
+    setCtrlStatus("error", "地址格式不对, 应为 IP:端口, 例如 1.2.3.4:7002");
+    return;
+  }
+
+  const password = $("ctrl-password").value;
+  const username = $("ctrl-username").value.trim(); // 对方用户名(选填, 仅用于记录)
+  const kind = ctrlOs === "mac" ? "vnc" : "rdp";
+  const invoke = getInvoke();
+
+  const btn = $("btn-remote");
+  isRemoting = true;
+  btn.disabled = true;
+  btn.classList.add("btn-disabled");
+  btn.textContent = "连接中...";
+  setCtrlStatus("connecting", "正在发起远程...");
+
+  try {
+    if (!invoke) {
+      // 浏览器预览
+      setTimeout(() => setCtrlStatus("ok", "(预览模式) 已发起远程"), 500);
+      return;
+    }
+
+    // 探测端口是否可达(仅作提示, 不阻断)。
+    // 关键: RDP(mstsc) 自带完善的连接/失败界面, 绝不能因为探测失败就不启动,
+    //       否则用户看到的就是"点了没反应"。所以无论探测结果如何都继续 remote_connect。
+    const [host, portStr] = splitAddress(address);
+    let reachable = true;
+    try {
+      reachable = await invoke("probe_remote", { host, port: parseInt(portStr, 10) });
+    } catch (e) {
+      reachable = true; // 探测本身出错也别挡路
+    }
+
+    setCtrlStatus("connecting", "正在打开远程窗口...");
+    const result = await invoke("remote_connect", { address, kind, password, username });
+    if (result && result.ok) {
+      // 探测不通但已启动: 给个温和提示; 通了就正常成功
+      if (!reachable) {
+        setCtrlStatus("ok", "已打开远程窗口。若连不上, 请确认对方已连线、端口已放行");
+      } else {
+        setCtrlStatus("ok", "✓ " + result.message);
+      }
+      addHistory(address, ctrlOs, username); // 记住这次远程(地址+系统+用户名, 不存密码)
+    } else {
+      const msg = result ? result.message : "远程失败";
+      if (msg.startsWith("BLOCKED:")) {
+        $("blocked-modal").classList.remove("hidden");
+        setCtrlStatus("error", msg.replace("BLOCKED:", ""));
+      } else {
+        setCtrlStatus("error", msg);
+      }
+    }
+  } catch (e) {
+    setCtrlStatus("error", "远程出错: " + e);
+  } finally {
+    isRemoting = false;
+    btn.disabled = false;
+    btn.classList.remove("btn-disabled");
+    btn.innerHTML = '<i class="bi bi-play-fill btn-icon"></i> 开始远程';
+  }
+}
+
+// 拆 "host:port" -> [host, port] (取最后一个冒号, 兼容将来 IPv6 少见情况)
+function splitAddress(addr) {
+  const i = addr.lastIndexOf(":");
+  return [addr.slice(0, i), addr.slice(i + 1)];
+}
+
+function setCtrlStatus(type, text) {
+  const dot = $("ctrl-status-dot");
+  const txt = $("ctrl-status-text");
+  if (!dot || !txt) return;
+  txt.textContent = text;
+  dot.className = "status-dot";
+  if (type === "connecting") {
+    dot.classList.add("dot-connecting");
+    txt.style.color = "";
+  } else if (type === "error") {
+    dot.classList.add("dot-off");
+    txt.style.color = "var(--danger)";
+  } else if (type === "ok") {
+    dot.classList.add("dot-on");
+    txt.style.color = "var(--success)";
+  } else {
+    dot.classList.add("dot-off");
+    txt.style.color = "";
+  }
+}
+
+// ---- 最近远程记录(存 localStorage, 仅地址+系统, 绝不存密码) ----
+const CTRL_HISTORY_KEY = "pd-ctrl-history";
+const CTRL_HISTORY_MAX = 5;
+
+function getHistory() {
+  try {
+    const raw = localStorage.getItem(CTRL_HISTORY_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) { return []; }
+}
+
+// 新增/置顶一条记录: {address, os, user}
+function addHistory(address, os, user) {
+  let list = getHistory();
+  // 去重(同地址): 先移除旧的, 再插到最前
+  list = list.filter((h) => h.address !== address);
+  list.unshift({ address, os, user: user || "" });
+  if (list.length > CTRL_HISTORY_MAX) list = list.slice(0, CTRL_HISTORY_MAX);
+  try { localStorage.setItem(CTRL_HISTORY_KEY, JSON.stringify(list)); } catch (e) {}
+  renderHistory();
+}
+
+// 渲染最近远程列表
+function renderHistory() {
+  const box = $("ctrl-history");
+  const listEl = $("ctrl-history-list");
+  if (!box || !listEl) return;
+  const list = getHistory();
+  if (list.length === 0) {
+    box.classList.add("hidden");
+    listEl.innerHTML = "";
+    return;
+  }
+  box.classList.remove("hidden");
+  listEl.innerHTML = "";
+  list.forEach((h) => {
+    const item = document.createElement("div");
+    item.className = "history-item";
+    const osLabel = h.os === "mac" ? "Mac" : "Windows";
+    const osIcon = h.os === "mac" ? "bi-apple" : "bi-windows";
+    // 用户名(选填): 有则显示在地址下方
+    const userLine = h.user
+      ? '<span class="hist-user"><i class="bi bi-person"></i>' + escapeHtml(h.user) + '</span>'
+      : '';
+    // 主体: 点击回填并可直接再连
+    item.innerHTML =
+      '<i class="bi ' + osIcon + ' hist-os"></i>' +
+      '<span class="hist-main">' +
+        '<span class="hist-addr">' + escapeHtml(h.address) + '</span>' +
+        userLine +
+      '</span>' +
+      '<span class="hist-tag">' + osLabel + '</span>' +
+      '<button class="hist-del" title="删除">&times;</button>';
+    // 点条目 -> 回填地址、系统和用户名
+    item.addEventListener("click", (e) => {
+      if (e.target.classList.contains("hist-del")) return; // 删除按钮单独处理
+      $("ctrl-address").value = h.address;
+      $("ctrl-username").value = h.user || "";
+      setCtrlOs(h.os);
+    });
+    // 删除单条
+    item.querySelector(".hist-del").addEventListener("click", (e) => {
+      e.stopPropagation();
+      removeHistory(h.address);
+    });
+    listEl.appendChild(item);
+  });
+}
+
+function removeHistory(address) {
+  let list = getHistory().filter((h) => h.address !== address);
+  try { localStorage.setItem(CTRL_HISTORY_KEY, JSON.stringify(list)); } catch (e) {}
+  renderHistory();
+}
+
+function clearHistory() {
+  try { localStorage.removeItem(CTRL_HISTORY_KEY); } catch (e) {}
+  renderHistory();
+}
+
+// 设置当前"对方系统"选择(同步按钮高亮 + 密码提示)
+function setCtrlOs(os) {
+  if (os !== "mac" && os !== "win") return;
+  ctrlOs = os;
+  document.querySelectorAll(".os-btn").forEach((b) =>
+    b.classList.toggle("active", b.dataset.os === os)
+  );
+  applyCtrlOsUi();
+}
+
+// 简单转义, 防地址里的特殊字符破坏 HTML
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[c]));
+}
+
+// ============ 共享上网(代理) ============
+let proxyRunning = false;
+let isProxyToggling = false;
+
+function initProxy() {
+  // 载入/生成 账号密码
+  loadOrGenProxyCred();
+  // 载入上次的端口
+  const savedPort = localStorage.getItem("pd-proxy-port");
+  if (savedPort) $("proxy-port").value = savedPort;
+
+  $("btn-proxy-toggle").addEventListener("click", onProxyToggle);
+  $("btn-proxy-regen").addEventListener("click", () => {
+    if (proxyRunning) return; // 运行中不允许改
+    genProxyCred();
+  });
+  $("btn-proxy-copy").addEventListener("click", () => {
+    copyText($("proxy-config-text").textContent);
+    const span = $("btn-proxy-copy").querySelector("span");
+    if (span) { const o = span.textContent; span.textContent = "已复制"; setTimeout(() => (span.textContent = o), 1500); }
+  });
+  $("btn-proxy-help").addEventListener("click", () => $("proxy-help-modal").classList.remove("hidden"));
+  $("btn-proxy-help-close").addEventListener("click", () => $("proxy-help-modal").classList.add("hidden"));
+  $("proxy-port").addEventListener("input", () => {
+    localStorage.setItem("pd-proxy-port", $("proxy-port").value.trim());
+  });
+}
+
+// 生成随机账号密码
+function genProxyCred() {
+  const user = "pd" + Math.random().toString(36).slice(2, 8);
+  const pass = Math.random().toString(36).slice(2, 10) + Math.random().toString(36).slice(2, 6);
+  $("proxy-user").value = user;
+  $("proxy-pass").value = pass;
+  try {
+    localStorage.setItem("pd-proxy-user", user);
+    localStorage.setItem("pd-proxy-pass", pass);
+  } catch (e) {}
+}
+function loadOrGenProxyCred() {
+  const u = localStorage.getItem("pd-proxy-user");
+  const p = localStorage.getItem("pd-proxy-pass");
+  if (u && p) {
+    $("proxy-user").value = u;
+    $("proxy-pass").value = p;
+  } else {
+    genProxyCred();
+  }
+}
+
+// 进入共享上网页时刷新: 检查是否有服务器信息、当前是否在运行
+async function refreshProxyView() {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  // 检查服务器信息(profile)
+  try {
+    const p = await invoke("load_profile");
+    const hasServer = p && p.server && p.port && p.token;
+    $("proxy-need-server").classList.toggle("hidden", !!hasServer);
+    $("btn-proxy-toggle").disabled = !hasServer;
+  } catch (e) {}
+  // 检查运行状态
+  try {
+    const running = await invoke("proxy_status");
+    setProxyRunning(running);
+  } catch (e) {}
+}
+
+async function onProxyToggle() {
+  if (isProxyToggling) return;
+  const invoke = getInvoke();
+  if (!invoke) return;
+
+  if (proxyRunning) {
+    // 停止
+    isProxyToggling = true;
+    try {
+      await invoke("stop_proxy_cmd");
+      setProxyRunning(false);
+      setProxyStatus("off", "未开启");
+    } catch (e) {
+      setProxyStatus("error", "停止出错: " + e);
+    } finally {
+      isProxyToggling = false;
+    }
+    return;
+  }
+
+  // 开启
+  const remote_port = $("proxy-port").value.trim();
+  if (!/^\d{1,5}$/.test(remote_port)) {
+    markError("proxy-port");
+    setProxyStatus("error", "代理端口应为数字, 如 6080");
+    return;
+  }
+  const user = $("proxy-user").value.trim();
+  const password = $("proxy-pass").value.trim();
+
+  const btn = $("btn-proxy-toggle");
+  isProxyToggling = true;
+  btn.disabled = true;
+  btn.classList.add("btn-disabled");
+  btn.textContent = "开启中...";
+  setProxyStatus("connecting", "正在开启共享上网...");
+
+  try {
+    const result = await invoke("start_proxy", { params: { remote_port, user, password } });
+    if (result && result.ok) {
+      setProxyRunning(true);
+      setProxyStatus("ok", "✓ " + result.message);
+      showProxyConfig(remote_port, user, password);
+    } else {
+      const msg = result ? result.message : "开启失败";
+      if (msg.startsWith("BLOCKED:")) {
+        $("blocked-modal").classList.remove("hidden");
+        setProxyStatus("error", msg.replace("BLOCKED:", ""));
+      } else {
+        setProxyStatus("error", msg);
+      }
+    }
+  } catch (e) {
+    setProxyStatus("error", "开启出错: " + e);
+  } finally {
+    isProxyToggling = false;
+    btn.disabled = false;
+    btn.classList.remove("btn-disabled");
+    // 按钮文字由 setProxyRunning 统一设置
+    setProxyRunning(proxyRunning);
+  }
+}
+
+// 显示给对方的配置串
+function showProxyConfig(port, user, pass) {
+  const invoke = getInvoke();
+  // 服务器 IP 从 profile 取
+  const render = (serverIp) => {
+    const text =
+      "类型: HTTP 代理\n" +
+      "地址: " + serverIp + "\n" +
+      "端口: " + port + "\n" +
+      "账号: " + user + "\n" +
+      "密码: " + pass;
+    $("proxy-config-text").textContent = text;
+    $("proxy-result").classList.remove("hidden");
+  };
+  if (invoke) {
+    invoke("load_profile").then((p) => render((p && p.server) ? p.server : "你的服务器IP")).catch(() => render("你的服务器IP"));
+  } else {
+    render("你的服务器IP");
+  }
+}
+
+// 设置运行状态(按钮外观 + 禁用改动)
+function setProxyRunning(running) {
+  proxyRunning = running;
+  const btn = $("btn-proxy-toggle");
+  if (running) {
+    btn.innerHTML = '<i class="bi bi-stop-circle btn-icon"></i> 停止共享上网';
+    btn.classList.add("btn-danger-look");
+  } else {
+    btn.innerHTML = '<i class="bi bi-globe2 btn-icon"></i> 开启共享上网';
+    btn.classList.remove("btn-danger-look");
+    $("proxy-result").classList.add("hidden");
+  }
+  // 运行中禁止改端口和账号密码
+  $("proxy-port").disabled = running;
+  $("btn-proxy-regen").disabled = running;
+}
+
+function setProxyStatus(type, text) {
+  const dot = $("proxy-status-dot");
+  const txt = $("proxy-status-text");
+  if (!dot || !txt) return;
+  txt.textContent = text;
+  dot.className = "status-dot";
+  if (type === "connecting") { dot.classList.add("dot-connecting"); txt.style.color = ""; }
+  else if (type === "error") { dot.classList.add("dot-off"); txt.style.color = "var(--danger)"; }
+  else if (type === "ok") { dot.classList.add("dot-on"); txt.style.color = "var(--success)"; }
+  else { dot.classList.add("dot-off"); txt.style.color = ""; }
+}
+

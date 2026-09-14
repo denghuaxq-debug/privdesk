@@ -3,7 +3,12 @@
   "bundle": {
     "targets": ["nsis"],
     "resources": [
-      "frpc.exe"
+      "frpc.exe",
+      "tvnviewer.exe",
+      "gost.exe",
+      "licenses/TightVNC-LICENSE.txt",
+      "licenses/gost-LICENSE.txt",
+      "licenses/第三方开源声明.txt"
     ],
     "windows": {
       "nsis": {

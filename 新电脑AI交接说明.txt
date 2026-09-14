@@ -1,0 +1,84 @@
+==================================================
+  【给新电脑上的 AI 看】PrivDesk 交接说明
+==================================================
+
+你好。用户从另一台电脑把这个 PrivDesk 项目转移过来了, 需要你帮他完成
+"推送到 GitHub → 用 GitHub Actions 云端打出 Mac 安装包(.dmg)"。
+请按下面的背景和步骤接手。
+
+
+--------------------------------------------------
+一、背景 (已经做完的事)
+--------------------------------------------------
+· PrivDesk 是一个"私有远程桌面"工具 (Tauri 2: 前端 JS + Rust 后端)。
+· 之前已在旧电脑上给它新增了 macOS 被控端支持 (走屏幕共享/VNC 5900),
+  并配好了一个 GitHub Actions 流水线: .github/workflows/build-mac.yml
+  —— 它会在 GitHub 的云端 Mac 上自动下载 frp、合成 universal 二进制、
+  打出未签名的通用 .dmg。所有代码和这个流水线都已提交进 git。
+· 用户没有 Mac, 旧电脑也不方便登录 GitHub, 所以把 .git 打包带到这台新电脑,
+  目标就是: 在这里把代码推上 GitHub, 然后在网页上触发打包。
+
+· 远程仓库 (已配置在 .git 里, 无需重新设置):
+    github  https://github.com/denghuaxq-debug/privdesk.git   ← 推这个
+    origin  https://gitee.com/dqhm/privdesk.git               ← Gitee, 备份用
+· 分支: master
+
+
+--------------------------------------------------
+二、请你帮用户做的事 (按顺序)
+--------------------------------------------------
+前提: 这台电脑要装了 Git。没装就引导安装 (https://git-scm.com)。
+
+1. 确认当前目录就是解压出来的 privdesk 文件夹 (里面有隐藏的 .git)。
+   运行:  git remote -v
+   应能看到上面两个远程。看不到说明不在正确目录, 让用户 cd 进去。
+
+2. 还原工作区文件 (解压后可能只有 .git, 源码需从记录还原):
+       git reset --hard HEAD
+   之后 git status 应显示干净。
+
+3. 推送到 GitHub:
+       git push -u github master
+   ※ 这一步需要 GitHub 认证, 多半会卡住或要求登录。注意:
+     - 你 (AI) 自己跑这条命令很可能会因为认证交互而超时/卡住。
+     - 正确做法: 让"用户自己"在他的终端里运行, 这样认证窗口能弹到他面前。
+       可指导他用 !git push -u github master 的方式跑 (若在 Claude Code 里)。
+     - 若命令行要账号密码:
+         用户名: denghuaxq-debug
+         密码:   不是登录密码! 是 Personal Access Token。
+                 生成路径: GitHub 网页 → 头像 → Settings → Developer settings
+                 → Personal access tokens → Tokens (classic) → Generate new token
+                 → 勾 "repo" 权限 → 生成 → 复制那串当密码。
+     - 看到 "master -> master" 即推送成功。
+
+4. 推成功后, 引导用户在网页上出 dmg (这步纯网页, 你只需给清晰指引):
+   a. 打开 https://github.com/denghuaxq-debug/privdesk
+   b. 点 "Actions" 标签; 若提示启用, 点 "I understand ... enable them"。
+   c. 左侧选 "Build macOS (.dmg)" → 右侧 "Run workflow" → 绿色 Run workflow。
+   d. 等几分钟变绿勾, 点进该次运行, 页面底部 "Artifacts" 里下载
+      "PrivDesk-macOS-dmg", 解压即得 .dmg。
+   e. 该 .dmg 是 universal (Intel+Apple芯片) 未签名包, 客户首次打开需
+      "右键(按住Control点击) → 打开"。
+
+
+--------------------------------------------------
+三、注意事项 / 可能的坑
+--------------------------------------------------
+· 不要试图在本机打 Mac 包 —— Tauri 的 .dmg 只能在 Mac 上构建, 这台多半是
+  Windows。整个方案的核心就是"借 GitHub 的云端 Mac", 别绕回本地打包。
+· 推送如果报 "Authentication failed": 基本是 token 没配或权限没勾 repo,
+  重新生成 token 即可。
+· 推送如果报 "rejected / non-fast-forward": 说明 GitHub 仓库非空 (建仓时误勾了
+  README 等)。让用户确认仓库是空的, 或改用 git push -u github master --force
+  (仅在确认远程没有要保留的内容时)。
+· Gitee (origin) 不会运行 .github 里的流水线, 只有 GitHub 会。别在 Gitee 上找
+  Actions。
+· 流水线也支持打 tag 自动发布: 推一个形如 v1.0.0 的 tag, 会自动把 dmg 传到
+  GitHub Releases。手动触发 (Run workflow) 则产物在 Artifacts 里。
+
+
+--------------------------------------------------
+四、完成标准
+--------------------------------------------------
+用户拿到一个 PrivDesk_*.dmg 文件, 能发给 Mac 客户安装。到此任务完成。
+有报错就让用户把命令行/网页的报错整段发给你, 逐条排查。

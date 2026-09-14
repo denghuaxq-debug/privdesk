@@ -1,0 +1,23 @@
+PrivDesk 使用的第三方开源组件
+==================================================
+
+本软件为实现远程连接功能, 捆绑并以独立进程方式调用了以下开源程序:
+
+1. frp (frpc) — 内网穿透客户端
+   - 许可证: Apache License 2.0
+   - 项目地址: https://github.com/fatedier/frp
+
+2. TightVNC Viewer (tvnviewer.exe) — 远程 Mac/VNC 画面查看器
+   - 许可证: GNU General Public License v2 (见 TightVNC-LICENSE.txt)
+   - 项目地址: https://www.tightvnc.com/
+   - 源码获取: https://www.tightvnc.com/download.php
+   - 说明: PrivDesk 未修改该程序, 仅以独立进程方式调用它 (命令行传入
+           连接地址与密码)。用户有权依据 GPLv2 获取其完整源码 (见上方链接)。
+
+Windows 远程桌面连接使用系统自带的 mstsc, 非第三方组件。
+
+3. gost (gost.exe) — 共享上网(代理)组件
+   - 许可证: MIT License (见 gost-LICENSE.txt)
+   - 项目地址: https://github.com/go-gost/gost
+   - 说明: PrivDesk 未修改该程序, 仅以独立进程方式调用它, 用于"共享上网"
+           功能(在本机启动 SOCKS5 代理, 再经 frp 穿透供其他设备使用)。
