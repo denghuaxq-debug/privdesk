@@ -21,3 +21,9 @@ Windows 远程桌面连接使用系统自带的 mstsc, 非第三方组件。
    - 项目地址: https://github.com/go-gost/gost
    - 说明: PrivDesk 未修改该程序, 仅以独立进程方式调用它, 用于"共享上网"
            功能(在本机启动 SOCKS5 代理, 再经 frp 穿透供其他设备使用)。
+
+4. WireGuard for Windows (wireguard.exe / wg.exe) — 全局共享隧道组件
+   - 许可证: GPLv2 (见 WireGuard-LICENSE.txt)
+   - 项目地址: https://www.wireguard.com/
+   - 源码地址: https://github.com/WireGuard/wireguard-windows
+   - 说明: PrivDesk 未修改官方签名文件, 仅随安装包分发并调用其命令行接口。

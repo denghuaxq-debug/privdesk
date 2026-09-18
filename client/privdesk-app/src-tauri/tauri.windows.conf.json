@@ -6,8 +6,11 @@
       "frpc.exe",
       "tvnviewer.exe",
       "gost.exe",
+      "wireguard.exe",
+      "wg.exe",
       "licenses/TightVNC-LICENSE.txt",
       "licenses/gost-LICENSE.txt",
+      "licenses/WireGuard-LICENSE.txt",
       "licenses/第三方开源声明.txt"
     ],
     "windows": {

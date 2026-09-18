@@ -16,6 +16,7 @@
         <span class="app-name">PrivDesk</span>
       </div>
       <div class="titlebar-right">
+        <button class="tb-btn" id="btn-server-settings" title="服务器设置" aria-label="服务器设置"><i class="bi bi-server"></i></button>
         <button class="tb-btn" id="btn-theme" title="主题设置"><i class="bi bi-palette"></i></button>
         <button class="tb-btn" id="btn-min" title="最小化"><i class="bi bi-dash-lg"></i></button>
         <button class="tb-btn tb-close" id="btn-close" title="关闭到托盘"><i class="bi bi-x-lg"></i></button>
@@ -43,6 +44,57 @@
           <button class="color-dot" data-accent="cyan"   style="background:#06b6d4" title="青色"></button>
           <button class="color-dot" data-accent="dark"   style="background:#334155" title="墨黑"></button>
           <button class="color-dot" data-accent="black"  style="background:#1a1a1a" title="纯黑"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 服务器设置与连接码生成 -->
+    <div id="server-settings-modal" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="server-settings-title">
+      <div class="modal-box settings-modal" tabindex="-1">
+        <div class="modal-header settings-header">
+          <i class="bi bi-server"></i>
+          <span id="server-settings-title">服务器设置</span>
+        </div>
+        <div class="modal-body">
+          <p class="modal-desc">填写服务端连接信息后，可在本机一键生成连接码。连接码不会上传；认证密钥必须与服务器配置一致。</p>
+          <div class="form settings-form">
+            <div class="field">
+              <label for="settings-server">服务器地址</label>
+              <input type="text" id="settings-server" maxlength="253" placeholder="例如 123.207.251.105" autocomplete="off" />
+            </div>
+            <div class="settings-columns">
+              <div class="field">
+                <label for="settings-port">连接端口</label>
+                <input type="text" id="settings-port" inputmode="numeric" maxlength="5" value="7000" />
+              </div>
+              <div class="field">
+                <label for="settings-remote">远程端口</label>
+                <input type="text" id="settings-remote" inputmode="numeric" maxlength="5" value="7002" />
+              </div>
+            </div>
+            <div class="field">
+              <label for="settings-token">认证密钥</label>
+              <div class="input-with-icon">
+                <input type="password" id="settings-token" maxlength="256" autocomplete="off" placeholder="填写服务端 auth.token" />
+                <button class="icon-btn" id="btn-toggle-settings-token" title="显示/隐藏认证密钥" aria-label="显示/隐藏认证密钥">
+                  <i class="bi bi-eye" id="settings-icon-eye"></i>
+                  <i class="bi bi-eye-slash hidden" id="settings-icon-eye-slash"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+          <div id="settings-status" class="settings-status" role="status"></div>
+          <div id="settings-code-result" class="settings-code-result hidden">
+            <label for="settings-generated-code">生成的连接码</label>
+            <div class="settings-code-row">
+              <textarea id="settings-generated-code" rows="3" readonly spellcheck="false"></textarea>
+              <button class="btn-copy" id="btn-copy-generated-code" title="复制连接码"><i class="bi bi-clipboard"></i>复制</button>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer settings-footer">
+          <button class="btn-secondary settings-cancel" id="btn-close-server-settings">关闭</button>
+          <button class="btn-secondary" id="btn-generate-code"><i class="bi bi-magic"></i> 生成连接码</button>
         </div>
       </div>
     </div>
@@ -281,6 +333,89 @@
         <button class="link-btn how-link" id="btn-proxy-help">
           <i class="bi bi-question-circle"></i> 对方怎么设置代理?
         </button>
+
+        <!-- ============ 全局共享(实验性 WireGuard 出口) ============ -->
+        <div class="full-tunnel-panel" id="full-tunnel-panel">
+          <div class="section-divider"><span>WireGuard 全局共享</span></div>
+          <div class="role-switch" role="tablist" aria-label="共享上网角色">
+            <button class="role-btn active" id="role-sharer" type="button" role="tab" aria-selected="true">
+              <i class="bi bi-router"></i> 共享者
+            </button>
+            <button class="role-btn" id="role-receiver" type="button" role="tab" aria-selected="false">
+              <i class="bi bi-pc-display"></i> 被共享的电脑
+            </button>
+          </div>
+
+          <div id="full-tunnel-sharer-panel">
+            <div class="ctrl-intro full-tunnel-intro">
+              <i class="bi bi-shield-lock"></i>
+              <span>这台电脑作为网络出口，让被共享的电脑通过它访问网络。WireGuard 组件已内置。</span>
+            </div>
+            <div class="form">
+              <div class="field">
+                <label for="full-tunnel-port">WireGuard 公网 UDP 端口 <span class="hint">(默认 51820)</span></label>
+                <input type="text" id="full-tunnel-port" value="51820" inputmode="numeric" maxlength="5" />
+              </div>
+            </div>
+            <button class="btn-primary" id="btn-full-tunnel-toggle">
+              <i class="bi bi-router btn-icon"></i> 开启全局共享
+            </button>
+            <div class="status">
+              <span class="status-dot dot-off" id="full-tunnel-status-dot"></span>
+              <span id="full-tunnel-status-text">未开启</span>
+            </div>
+            <div id="full-tunnel-result" class="address-box hidden">
+              <div class="address-label">把下面配置交给被共享的电脑，在 PrivDesk 的“被共享的电脑”角色中粘贴：</div>
+              <textarea id="full-tunnel-client-config" class="full-tunnel-config" rows="9" readonly spellcheck="false"></textarea>
+              <button class="btn-copy" id="btn-copy-full-tunnel-config">
+                <i class="bi bi-clipboard"></i><span>复制配置</span>
+              </button>
+              <div class="login-hint">
+                <i class="bi bi-exclamation-circle"></i>
+                <span>云服务器安全组需要放行该端口 UDP；此版本暂只转发 IPv4。</span>
+              </div>
+            </div>
+          </div>
+
+          <div id="full-tunnel-receiver-panel" class="hidden">
+            <div class="ctrl-intro full-tunnel-intro">
+              <i class="bi bi-download"></i>
+              <span>把共享者生成的 WireGuard 配置粘贴到这里，本机将通过共享者访问网络。</span>
+            </div>
+            <div class="field">
+              <label for="full-tunnel-import-config">共享者配置</label>
+              <textarea id="full-tunnel-import-config" class="full-tunnel-config" rows="9" placeholder="粘贴 [Interface] 和 [Peer] 配置" spellcheck="false"></textarea>
+            </div>
+            <button class="btn-primary" id="btn-full-tunnel-client-toggle">
+              <i class="bi bi-plug btn-icon"></i> 开启被共享网络
+            </button>
+            <div class="status">
+              <span class="status-dot dot-off" id="full-tunnel-client-status-dot"></span>
+              <span id="full-tunnel-client-status-text">未开启</span>
+            </div>
+            <div class="full-tunnel-note">
+              <i class="bi bi-shield-check"></i>
+              <span>配置只用于启动本机 WireGuard 服务，不会保存到连接码或 localStorage。</span>
+            </div>
+          </div>
+
+          <div id="full-tunnel-diagnostics" class="full-tunnel-diagnostics hidden" role="status" aria-live="polite">
+            <div class="full-tunnel-diagnostics-header">
+              <span><i class="bi bi-terminal"></i> 诊断日志</span>
+              <button class="link-btn" id="btn-open-full-tunnel-log" type="button">打开日志目录</button>
+            </div>
+            <pre id="full-tunnel-diagnostics-text">正在等待全局共享操作...</pre>
+            <div class="full-tunnel-note">
+              <i class="bi bi-shield-check"></i>
+              <span>日志已自动隐藏认证 token 和 WireGuard 私钥，仅用于排查启动失败。</span>
+            </div>
+          </div>
+
+          <div class="full-tunnel-note">
+            <i class="bi bi-info-circle"></i>
+            <span>启动和停止需要管理员权限；停止 PrivDesk 后会自动清理 WireGuard 服务、网络转发和临时文件。</span>
+          </div>
+        </div>
       </div>
 
     </div>
@@ -465,6 +600,6 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

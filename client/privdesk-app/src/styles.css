@@ -32,8 +32,8 @@
   border: 1px solid #555;
 }
 
-/* 深色主题(默认) */
-:root, :root[data-theme="dark"] {
+/* 深色主题 */
+:root[data-theme="dark"] {
   --bg: #1e293b;
   --card: #273548;
   --text: #e2e8f0;
@@ -44,8 +44,8 @@
   --addr-border: var(--primary);
 }
 
-/* 纯黑主题 */
-:root[data-theme="black"] {
+/* 纯黑主题(默认) */
+:root, :root[data-theme="black"] {
   --bg: #0a0a0a;
   --card: #161616;
   --text: #f0f0f0;
@@ -521,6 +521,80 @@ input::placeholder {
 }
 .btn-secondary:hover { background: var(--primary-hover); }
 
+/* ===== 服务器设置与连接码生成 ===== */
+.settings-modal {
+  max-width: 390px;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.settings-modal::-webkit-scrollbar { display: none; }
+.settings-header {
+  color: var(--text);
+}
+.settings-header i { color: var(--primary); }
+.settings-form { gap: 12px; }
+.settings-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.settings-status {
+  min-height: 20px;
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-light);
+}
+.settings-status.ok { color: var(--success); }
+.settings-status.error { color: var(--danger); }
+.settings-code-result {
+  margin-top: 4px;
+  padding: 10px;
+  background: var(--addr-bg);
+  border: 1px solid var(--addr-border);
+  border-radius: 8px;
+}
+.settings-code-result > label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--text-light);
+  font-size: 12px;
+}
+.settings-code-row {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+}
+.settings-code-row textarea {
+  flex: 1;
+  min-width: 0;
+  resize: none;
+  padding: 8px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  color: var(--text);
+  font: 12px/1.4 "Consolas", monospace;
+  user-select: text;
+  overflow-wrap: anywhere;
+  overflow: auto;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.settings-code-row textarea::-webkit-scrollbar { display: none; }
+.settings-code-row textarea:focus { outline: none; border-color: var(--primary); }
+.settings-code-row .btn-copy {
+  align-self: center;
+}
+.settings-footer { justify-content: space-between; }
+.settings-cancel {
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+.settings-cancel:hover { background: var(--card); }
+
 /* ===== 远程桌面状态检测 ===== */
 .rdp-status {
   display: flex;
@@ -839,6 +913,127 @@ input::placeholder {
   margin: 8px 0;
   user-select: text;
 }
+
+.full-tunnel-panel {
+  margin-top: 22px;
+  padding-top: 2px;
+  border-top: 1px solid var(--border);
+}
+.role-switch {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  margin: 0 0 14px;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+.role-btn {
+  flex: 1;
+  border: 0;
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: var(--text-light);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.role-btn:hover { color: var(--text); }
+.role-btn.active {
+  color: var(--text);
+  background: var(--card);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .16);
+}
+.role-btn i { margin-right: 4px; }
+.section-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 18px 0 12px;
+  color: var(--text-light);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.section-divider::before,
+.section-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: var(--border);
+}
+.full-tunnel-intro {
+  margin-bottom: 14px;
+  background: var(--card);
+  border-color: var(--border);
+}
+.full-tunnel-intro i { color: var(--text-light); }
+.full-tunnel-config {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+  font-family: "Consolas", "Menlo", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  background: var(--addr-bg);
+  border: 1px dashed var(--addr-border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0;
+  user-select: text;
+}
+.full-tunnel-diagnostics {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: var(--addr-bg);
+  border: 1px solid var(--addr-border);
+  border-radius: 8px;
+}
+.full-tunnel-diagnostics-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-light);
+  font-size: 12px;
+  font-weight: 600;
+}
+.full-tunnel-diagnostics-header i { margin-right: 4px; }
+.full-tunnel-diagnostics-header .link-btn {
+  padding: 0;
+  font-size: 11px;
+}
+.full-tunnel-diagnostics pre {
+  max-height: 190px;
+  margin: 8px 0 0;
+  padding: 9px 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 11px/1.5 "Consolas", "Menlo", monospace;
+  user-select: text;
+  scrollbar-width: thin;
+}
+.full-tunnel-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: var(--text-light);
+  font-size: 11px;
+  line-height: 1.45;
+  margin-top: 11px;
+}
+.full-tunnel-note i { margin-top: 1px; }
 
 /* 运行中的"停止"按钮外观(复用主按钮结构, 改红) */
 .btn-primary.btn-danger-look { background: var(--danger); }

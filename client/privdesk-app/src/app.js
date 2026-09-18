@@ -1,3 +1,9 @@
+import {
+  decodeConnectionCode,
+  encodeConnectionCode,
+  validateConnectionInfo,
+} from "./connection-code.js";
+
 // ===== PrivDesk 客户端 - 界面交互逻辑 =====
 // 自动适配: 在 Tauri 中调用真实后端; 在浏览器预览中用模拟。
 
@@ -89,8 +95,7 @@ function bindEvents() {
       return;
     }
     try {
-      const json = atob(code.replace(/^PRIVDESK-/, ""));
-      const data = JSON.parse(json);
+      const data = decodeConnectionCode(code);
       $("server-addr").value = data.server || "";
       $("server-port").value = data.port || "7000";
       $("token").value = data.token || "";
@@ -129,6 +134,26 @@ function bindEvents() {
   });
 
   // ---------- 标题栏按钮 ----------
+  $("btn-server-settings").addEventListener("click", openServerSettings);
+  $("btn-close-server-settings").addEventListener("click", closeServerSettings);
+  $("btn-generate-code").addEventListener("click", onGenerateCode);
+  $("btn-copy-generated-code").addEventListener("click", () => {
+    copyText($("settings-generated-code").value, $("btn-copy-generated-code"));
+  });
+  $("btn-toggle-settings-token").addEventListener("click", () => {
+    const input = $("settings-token");
+    const showing = input.type === "password";
+    input.type = showing ? "text" : "password";
+    $("settings-icon-eye").classList.toggle("hidden", !showing);
+    $("settings-icon-eye-slash").classList.toggle("hidden", showing);
+  });
+  ["settings-server", "settings-port", "settings-token", "settings-remote"].forEach((id) => {
+    $(id).addEventListener("input", () => clearError(id));
+  });
+  $("server-settings-modal").addEventListener("click", (event) => {
+    if (event.target === $("server-settings-modal")) closeServerSettings();
+  });
+
   $("btn-min").addEventListener("click", async () => {
     if (inTauri()) {
       try {
@@ -161,6 +186,10 @@ function bindEvents() {
 
   // ---------- 查看日志 (连接失败时引导) ----------
   $("btn-view-log").addEventListener("click", () => {
+    const invoke = getInvoke();
+    if (invoke) invoke("open_log_dir").catch((e) => console.error("open_log_dir", e));
+  });
+  $("btn-open-full-tunnel-log").addEventListener("click", () => {
     const invoke = getInvoke();
     if (invoke) invoke("open_log_dir").catch((e) => console.error("open_log_dir", e));
   });
@@ -403,6 +432,101 @@ async function loadProfile() {
   }
 }
 
+// ---------- 服务器设置与连接码生成 ----------
+function readMainConnectionInfo() {
+  return {
+    server: $("server-addr").value.trim(),
+    port: $("server-port").value.trim(),
+    token: $("token").value.trim(),
+    remote: $("remote-port").value.trim(),
+  };
+}
+
+function setSettingsConnectionInfo(info) {
+  $("settings-server").value = info.server || "";
+  $("settings-port").value = info.port || "7000";
+  $("settings-token").value = info.token || "";
+  $("settings-remote").value = info.remote || "7002";
+}
+
+function setSettingsStatus(type, text) {
+  const status = $("settings-status");
+  status.textContent = text;
+  status.className = "settings-status";
+  if (type) status.classList.add(type);
+}
+
+function openServerSettings() {
+  setSettingsConnectionInfo(readMainConnectionInfo());
+  ["settings-server", "settings-port", "settings-token", "settings-remote"].forEach(clearError);
+  $("settings-generated-code").value = "";
+  $("settings-code-result").classList.add("hidden");
+  setSettingsStatus("", "");
+  $("server-settings-modal").classList.remove("hidden");
+  $("settings-server").focus();
+}
+
+function closeServerSettings() {
+  $("server-settings-modal").classList.add("hidden");
+}
+
+async function persistConnectionInfo(info) {
+  const invoke = getInvoke();
+  if (!invoke) return null;
+  try {
+    return await invoke("save_profile", { params: info });
+  } catch (e) {
+    return false;
+  }
+}
+
+async function onGenerateCode() {
+  const info = {
+    server: $("settings-server").value.trim(),
+    port: $("settings-port").value.trim(),
+    token: $("settings-token").value.trim(),
+    remote: $("settings-remote").value.trim(),
+  };
+  const validation = validateConnectionInfo(info);
+  const fieldIds = {
+    server: "settings-server",
+    port: "settings-port",
+    token: "settings-token",
+    remote: "settings-remote",
+  };
+
+  Object.values(fieldIds).forEach(clearError);
+  if (!validation.ok) {
+    for (const [field, message] of Object.entries(validation.errors)) {
+      markError(fieldIds[field]);
+      setSettingsStatus("error", message);
+    }
+    const firstInvalid = Object.keys(validation.errors)[0];
+    $(fieldIds[firstInvalid]).focus();
+    return;
+  }
+
+  try {
+    const code = encodeConnectionCode(validation.value);
+    $("settings-generated-code").value = code;
+    $("settings-code-result").classList.remove("hidden");
+
+    // 生成后同步主表单, 用户可直接点击“连接”。
+    $("server-addr").value = validation.value.server;
+    $("server-port").value = validation.value.port;
+    $("token").value = validation.value.token;
+    $("remote-port").value = validation.value.remote;
+
+    const saved = await persistConnectionInfo(validation.value);
+    setSettingsStatus(
+      saved === false ? "error" : "ok",
+      saved === false ? "连接码已生成，但设置保存失败" : "✓ 连接码已生成，服务器设置已保存"
+    );
+  } catch (e) {
+    setSettingsStatus("error", "连接码生成失败，请检查输入");
+  }
+}
+
 // 开机自启场景: 若已开启自启 + 有完整连接信息, 自动连接并最小化到托盘
 // 注意: 独立实现, 绝不锁界面(不复用 onConnect 的按钮禁用逻辑)
 async function maybeAutoConnect() {
@@ -466,10 +590,24 @@ async function onConnect() {
     return;
   }
 
-  const server = fields[0].val;
-  const port = fields[1].val;
-  const token = fields[2].val;
-  const remote = fields[3].val;
+  // 校验地址、端口和密钥, 防止非法内容进入 frpc 配置文件。
+  const validation = validateConnectionInfo({
+    server: fields[0].val,
+    port: fields[1].val,
+    token: fields[2].val,
+    remote: fields[3].val,
+  });
+  if (!validation.ok) {
+    const fieldIds = { server: fields[0].id, port: fields[1].id, token: fields[2].id, remote: fields[3].id };
+    for (const [field, message] of Object.entries(validation.errors)) {
+      markError(fieldIds[field]);
+      setStatus("error", message);
+    }
+    $(fieldIds[Object.keys(validation.errors)[0]]).focus();
+    return;
+  }
+
+  const { server, port, token, remote } = validation.value;
 
   const btn = $("btn-connect");
   isConnecting = true;
@@ -585,13 +723,19 @@ async function onDisconnect() {
 }
 
 // ---------- 复制文本 ----------
-function copyText(text) {
+function copyText(text, feedbackButton = $("btn-copy")) {
   const done = () => {
-    const span = $("btn-copy").querySelector("span");
-    if (!span) return;
-    const old = span.textContent;
-    span.textContent = "已复制";
-    setTimeout(() => (span.textContent = old), 1500);
+    if (!feedbackButton) return;
+    const span = feedbackButton.querySelector("span");
+    if (span) {
+      const old = span.textContent;
+      span.textContent = "已复制";
+      setTimeout(() => (span.textContent = old), 1500);
+      return;
+    }
+    const old = feedbackButton.textContent;
+    feedbackButton.textContent = "已复制";
+    setTimeout(() => (feedbackButton.textContent = old), 1500);
   };
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopy(text, done));
@@ -704,6 +848,7 @@ function initController() {
 
   // ---- 初始化共享上网 ----
   initProxy();
+  initFullTunnel();
 }
 
 // 切换 被控/控制/共享上网 三个模式视图
@@ -1113,5 +1258,225 @@ function setProxyStatus(type, text) {
   else if (type === "error") { dot.classList.add("dot-off"); txt.style.color = "var(--danger)"; }
   else if (type === "ok") { dot.classList.add("dot-on"); txt.style.color = "var(--success)"; }
   else { dot.classList.add("dot-off"); txt.style.color = ""; }
+}
+
+// ============ 全局共享(实验性 WireGuard 出口) ============
+let fullTunnelRunning = false;
+let isFullTunnelToggling = false;
+let fullTunnelClientRunning = false;
+let isFullTunnelClientToggling = false;
+
+function initFullTunnel() {
+  const savedPort = localStorage.getItem("pd-full-tunnel-port");
+  if (savedPort) $("full-tunnel-port").value = savedPort;
+
+  $("role-sharer").addEventListener("click", () => setFullTunnelRole("sharer"));
+  $("role-receiver").addEventListener("click", () => setFullTunnelRole("receiver"));
+  $("btn-full-tunnel-toggle").addEventListener("click", onFullTunnelToggle);
+  $("btn-full-tunnel-client-toggle").addEventListener("click", onFullTunnelClientToggle);
+  $("btn-copy-full-tunnel-config").addEventListener("click", () => {
+    copyText($("full-tunnel-client-config").value, $("btn-copy-full-tunnel-config"));
+  });
+  $("full-tunnel-port").addEventListener("input", () => {
+    localStorage.setItem("pd-full-tunnel-port", $("full-tunnel-port").value.trim());
+  });
+  $("full-tunnel-port").addEventListener("input", () => clearError("full-tunnel-port"));
+  setFullTunnelRole(localStorage.getItem("pd-full-tunnel-role") === "receiver" ? "receiver" : "sharer");
+  refreshFullTunnelView();
+}
+
+function setFullTunnelRole(role) {
+  const receiver = role === "receiver";
+  localStorage.setItem("pd-full-tunnel-role", receiver ? "receiver" : "sharer");
+  $("role-sharer").classList.toggle("active", !receiver);
+  $("role-receiver").classList.toggle("active", receiver);
+  $("role-sharer").setAttribute("aria-selected", String(!receiver));
+  $("role-receiver").setAttribute("aria-selected", String(receiver));
+  $("full-tunnel-sharer-panel").classList.toggle("hidden", receiver);
+  $("full-tunnel-receiver-panel").classList.toggle("hidden", !receiver);
+  renderFullTunnelControls();
+}
+
+async function refreshFullTunnelView() {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  try {
+    const running = !!(await invoke("full_tunnel_status"));
+    setFullTunnelRunning(running);
+    setFullTunnelStatus(running ? "ok" : "off", running ? "已开启" : "未开启");
+  } catch (e) {
+    console.error("full_tunnel_status", e);
+  }
+}
+
+async function onFullTunnelToggle() {
+  if (isFullTunnelToggling) return;
+  const invoke = getInvoke();
+  if (!invoke) {
+    setFullTunnelStatus("error", "请在 PrivDesk 客户端中使用");
+    return;
+  }
+
+  if (fullTunnelRunning) {
+    await stopFullTunnel();
+    return;
+  }
+
+  const remote_port = $("full-tunnel-port").value.trim();
+  const port = Number(remote_port);
+  if (!/^\d{1,5}$/.test(remote_port) || !Number.isInteger(port) || port < 1024 || port > 65535) {
+    markError("full-tunnel-port");
+    setFullTunnelStatus("error", "全局共享端口应为 1024-65535 之间的数字");
+    return;
+  }
+
+  isFullTunnelToggling = true;
+  const btn = $("btn-full-tunnel-toggle");
+  btn.disabled = true;
+  btn.classList.add("btn-disabled");
+  btn.textContent = "开启中...";
+  setFullTunnelStatus("connecting", "正在配置 WireGuard 和网络转发...");
+  setFullTunnelDiagnostics("正在收集管理员 PowerShell、WireGuard 和网络配置日志...");
+
+  try {
+    const result = await invoke("start_full_tunnel", { params: { remote_port } });
+    setFullTunnelDiagnostics(result && result.diagnostics
+      ? result.diagnostics
+      : "后端没有返回诊断内容，请点击“打开日志目录”查看 full-tunnel.log。");
+    if (result && result.ok) {
+      setFullTunnelRunning(true);
+      setFullTunnelStatus("ok", "✓ " + result.message);
+      $("full-tunnel-client-config").value = result.client_config || "";
+      $("full-tunnel-result").classList.remove("hidden");
+    } else {
+      setFullTunnelStatus("error", result ? result.message : "开启失败");
+    }
+  } catch (e) {
+    setFullTunnelDiagnostics("前端调用异常：" + String(e));
+    setFullTunnelStatus("error", "开启出错: " + e);
+  } finally {
+    isFullTunnelToggling = false;
+    btn.disabled = false;
+    btn.classList.remove("btn-disabled");
+    setFullTunnelRunning(fullTunnelRunning);
+  }
+}
+
+async function onFullTunnelClientToggle() {
+  if (isFullTunnelClientToggling) return;
+  const invoke = getInvoke();
+  if (!invoke) {
+    setFullTunnelStatus("error", "请在 PrivDesk 客户端中使用");
+    return;
+  }
+
+  if (fullTunnelRunning || fullTunnelClientRunning) {
+    await stopFullTunnel();
+    return;
+  }
+
+  const config = $("full-tunnel-import-config").value.trim();
+  if (!config) {
+    setFullTunnelStatus("error", "请先粘贴共享者生成的 WireGuard 配置");
+    return;
+  }
+
+  isFullTunnelClientToggling = true;
+  const btn = $("btn-full-tunnel-client-toggle");
+  btn.disabled = true;
+  btn.classList.add("btn-disabled");
+  btn.textContent = "开启中...";
+  setFullTunnelStatus("connecting", "正在启动被共享网络...");
+  setFullTunnelDiagnostics("正在收集管理员 PowerShell、WireGuard 和网络配置日志...");
+
+  try {
+    const result = await invoke("start_full_tunnel_client", { params: { config } });
+    setFullTunnelDiagnostics(result && result.diagnostics
+      ? result.diagnostics
+      : "后端没有返回诊断内容，请点击“打开日志目录”查看 full-tunnel.log。");
+    if (result && result.ok) {
+      fullTunnelClientRunning = true;
+      setFullTunnelRunning(true);
+      setFullTunnelStatus("ok", "✓ " + result.message);
+    } else {
+      setFullTunnelStatus("error", result ? result.message : "开启失败");
+    }
+  } catch (e) {
+    setFullTunnelDiagnostics("前端调用异常：" + String(e));
+    setFullTunnelStatus("error", "开启出错: " + e);
+  } finally {
+    isFullTunnelClientToggling = false;
+    btn.disabled = false;
+    btn.classList.remove("btn-disabled");
+    renderFullTunnelControls();
+  }
+}
+
+async function stopFullTunnel() {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  isFullTunnelToggling = true;
+  isFullTunnelClientToggling = true;
+  try {
+    await invoke("stop_full_tunnel_cmd");
+    fullTunnelClientRunning = false;
+    setFullTunnelRunning(false);
+    setFullTunnelStatus("off", "未开启");
+  } catch (e) {
+    setFullTunnelStatus("error", "停止失败: " + e);
+  } finally {
+    isFullTunnelToggling = false;
+    isFullTunnelClientToggling = false;
+    renderFullTunnelControls();
+  }
+}
+
+function setFullTunnelRunning(running) {
+  fullTunnelRunning = running;
+  if (!running) fullTunnelClientRunning = false;
+  renderFullTunnelControls();
+}
+
+function renderFullTunnelControls() {
+  const sharerBtn = $("btn-full-tunnel-toggle");
+  const receiverBtn = $("btn-full-tunnel-client-toggle");
+  const running = fullTunnelRunning;
+  if (sharerBtn) {
+    sharerBtn.innerHTML = running
+      ? '<i class="bi bi-stop-circle btn-icon"></i> 停止全局共享'
+      : '<i class="bi bi-router btn-icon"></i> 开启全局共享';
+    sharerBtn.classList.toggle("btn-danger-look", running);
+  }
+  if (receiverBtn) {
+    receiverBtn.innerHTML = running
+      ? '<i class="bi bi-stop-circle btn-icon"></i> 停止被共享网络'
+      : '<i class="bi bi-plug btn-icon"></i> 开启被共享网络';
+    receiverBtn.classList.toggle("btn-danger-look", running);
+  }
+  $("full-tunnel-port").disabled = running;
+  $("full-tunnel-import-config").disabled = running;
+}
+
+function setFullTunnelStatus(type, text) {
+  [["full-tunnel-status-dot", "full-tunnel-status-text"], ["full-tunnel-client-status-dot", "full-tunnel-client-status-text"]]
+    .forEach(([dotId, textId]) => {
+      const dot = $(dotId);
+      const txt = $(textId);
+      if (!dot || !txt) return;
+      txt.textContent = text;
+      dot.className = "status-dot";
+      if (type === "connecting") { dot.classList.add("dot-connecting"); txt.style.color = ""; }
+      else if (type === "error") { dot.classList.add("dot-off"); txt.style.color = "var(--danger)"; }
+      else if (type === "ok") { dot.classList.add("dot-on"); txt.style.color = "var(--success)"; }
+      else { dot.classList.add("dot-off"); txt.style.color = ""; }
+    });
+}
+
+function setFullTunnelDiagnostics(text) {
+  const panel = $("full-tunnel-diagnostics");
+  const output = $("full-tunnel-diagnostics-text");
+  if (!panel || !output) return;
+  panel.classList.remove("hidden");
+  output.textContent = String(text || "没有可显示的诊断日志。");
 }
 

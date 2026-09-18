@@ -28,9 +28,10 @@ server/                   服务端部署脚本
 
 - `client/privdesk-app/src-tauri/frpc.exe` — 客户端内置的 frp 客户端 (Windows)
 - `client/privdesk-app/src-tauri/frpc` — 客户端内置的 frp 客户端 (macOS, universal)
+- `client/privdesk-app/src-tauri/wireguard.exe` / `wg.exe` — Windows 全局共享所需的官方 WireGuard 组件
 - `server/privdesk-server-installer/privdesk-server_amd64` / `_arm64` — 服务端 frps 程序
 
-从 [frp 官方releases](https://github.com/fatedier/frp/releases) 下载 v0.69.1 对应文件即可。
+从 [frp 官方 releases](https://github.com/fatedier/frp/releases) 下载 v0.69.1 对应文件；从 [WireGuard 官方下载页](https://www.wireguard.com/install/) 获取 Windows 组件，并将 `wireguard.exe` 与 `wg.exe` 放入 `client/privdesk-app/src-tauri/`。
 > macOS 的 `frpc` 需把 `darwin_amd64` 与 `darwin_arm64` 用 `lipo` 合成 universal；GitHub Actions 工作流已自动完成这一步。
 
 ## 构建

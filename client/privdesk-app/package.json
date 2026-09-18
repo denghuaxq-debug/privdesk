@@ -1,9 +1,11 @@
 {
   "name": "privdesk",
-  "version": "1.0.0",
+  "version": "1.0.1",
+  "type": "module",
   "description": "PrivDesk - 私有远程桌面",
   "scripts": {
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "test": "node --test tests/*.test.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2"
