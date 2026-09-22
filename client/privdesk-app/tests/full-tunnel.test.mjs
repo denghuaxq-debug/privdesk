@@ -8,6 +8,21 @@ const app = readFileSync(new URL("src/app.js", root), "utf8");
 const rust = readFileSync(new URL("src-tauri/src/lib.rs", root), "utf8");
 const windowsConfig = readFileSync(new URL("src-tauri/tauri.windows.conf.json", root), "utf8");
 
+test("HTTP sharing and full sharing stay in separate top-level tabs", () => {
+  assert.match(index, /id="tab-proxy" data-mode="proxy"[\s\S]*?HTTP共享/);
+  assert.match(index, /id="tab-full-tunnel" data-mode="full-tunnel"[\s\S]*?全局共享/);
+  assert.match(index, /id="mode-proxy"/);
+  assert.match(index, /id="mode-full-tunnel"/);
+
+  const proxyStart = index.indexOf('<div id="mode-proxy"');
+  const fullTunnelStart = index.indexOf('<div id="mode-full-tunnel"');
+  assert.ok(proxyStart >= 0);
+  assert.ok(fullTunnelStart > proxyStart);
+  assert.doesNotMatch(index.slice(proxyStart, fullTunnelStart), /full-tunnel-panel/);
+  assert.match(app, /const modes = \["controlled", "controller", "proxy", "full-tunnel"\]/);
+  assert.match(app, /\$\("mode-full-tunnel"\)\.classList\.toggle\("hidden", m !== "full-tunnel"\)/);
+});
+
 test("full sharing exposes a WireGuard exit-node panel", () => {
   assert.match(index, /id="role-sharer"/);
   assert.match(index, /id="role-receiver"/);
@@ -47,6 +62,11 @@ test("full sharing configures WireGuard and NAT in one elevated operation with r
   assert.match(rust, /Start-Process -FilePath \$wg/);
   assert.match(rust, /-Wait -PassThru/);
   assert.match(rust, /\$wgProcess\.ExitCode/);
+});
+
+test("full sharing cleans stale WinNAT resources without interactive confirmation", () => {
+  assert.match(rust, /Remove-NetNat -Name '\{nat_name\}' -Confirm:\$false/);
+  assert.match(rust, /Remove-NetFirewallRule -DisplayName '\{firewall_name\}' -Confirm:\$false/);
 });
 
 test("WireGuard cleanup skips missing tunnel services without showing an error dialog", () => {

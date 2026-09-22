@@ -846,23 +846,26 @@ function initController() {
   renderHistory();
   applyCtrlOsUi();
 
-  // ---- 初始化共享上网 ----
+  // ---- 初始化 HTTP / 全局共享 ----
   initProxy();
   initFullTunnel();
 }
 
-// 切换 被控/控制/共享上网 三个模式视图
+// 切换 被控/控制/HTTP共享/全局共享 四个模式视图
 function switchMode(mode) {
-  const modes = ["controlled", "controller", "proxy"];
+  const modes = ["controlled", "controller", "proxy", "full-tunnel"];
   const m = modes.includes(mode) ? mode : "controlled";
   $("mode-controlled").classList.toggle("hidden", m !== "controlled");
   $("mode-controller").classList.toggle("hidden", m !== "controller");
   $("mode-proxy").classList.toggle("hidden", m !== "proxy");
+  $("mode-full-tunnel").classList.toggle("hidden", m !== "full-tunnel");
   $("tab-controlled").classList.toggle("active", m === "controlled");
   $("tab-controller").classList.toggle("active", m === "controller");
   $("tab-proxy").classList.toggle("active", m === "proxy");
-  // 进入共享上网时刷新一次(检查服务器信息/运行状态)
+  $("tab-full-tunnel").classList.toggle("active", m === "full-tunnel");
+  // 进入共享页面时刷新一次(检查服务器信息/运行状态)
   if (m === "proxy") refreshProxyView();
+  if (m === "full-tunnel") refreshFullTunnelView();
 }
 
 // 根据选择的对方系统, 调整密码提示文案

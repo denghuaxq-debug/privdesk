@@ -4,7 +4,11 @@
   padding: 0;
   box-sizing: border-box;
   font-family: "Microsoft YaHei", "Segoe UI", system-ui, sans-serif;
+  /* 保留滚动能力，但不显示滚动条，避免小窗口出现突兀的白色滚道 */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+*::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
 /* ===== 主题变量 ===== */
 /* 强调色(主题色), 默认蓝色, 由 data-accent 切换 */
@@ -715,7 +719,7 @@ input::placeholder {
   animation: shake 0.4s ease;
 }
 
-/* ===== 模式切换 (被控 / 控制) ===== */
+/* ===== 模式切换 (被控 / 控制 / HTTP共享 / 全局共享) ===== */
 .mode-tabs {
   display: flex;
   gap: 6px;
@@ -727,6 +731,7 @@ input::placeholder {
 }
 .mode-tab {
   flex: 1;
+  min-width: 0;
   padding: 9px 6px;
   border: none;
   background: transparent;
@@ -739,6 +744,7 @@ input::placeholder {
   align-items: center;
   justify-content: center;
   gap: 5px;
+  white-space: nowrap;
   transition: background 0.15s, color 0.15s;
 }
 .mode-tab:hover { color: var(--text); }
@@ -915,9 +921,8 @@ input::placeholder {
 }
 
 .full-tunnel-panel {
-  margin-top: 22px;
-  padding-top: 2px;
-  border-top: 1px solid var(--border);
+  margin-top: 0;
+  padding-top: 0;
 }
 .role-switch {
   display: flex;
@@ -956,6 +961,9 @@ input::placeholder {
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
+}
+.full-tunnel-panel > .section-divider {
+  margin-top: 0;
 }
 .section-divider::before,
 .section-divider::after {
@@ -1022,7 +1030,7 @@ input::placeholder {
   border-radius: 6px;
   font: 11px/1.5 "Consolas", "Menlo", monospace;
   user-select: text;
-  scrollbar-width: thin;
+  scrollbar-width: none;
 }
 .full-tunnel-note {
   display: flex;

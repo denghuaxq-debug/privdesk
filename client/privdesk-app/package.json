@@ -1,6 +1,6 @@
 {
   "name": "privdesk",
-  "version": "1.0.1",
+  "version": "1.0.4",
   "type": "module",
   "description": "PrivDesk - 私有远程桌面",
   "scripts": {

@@ -36,3 +36,10 @@ test("settings surfaces keep scrolling usable without visible scrollbars", () =>
   assert.match(styles, /\.settings-code-row textarea\s*\{[\s\S]*?scrollbar-width:\s*none/);
   assert.match(styles, /\.settings-code-row textarea::-webkit-scrollbar\s*\{[\s\S]*?display:\s*none/);
 });
+
+test("all scrollable surfaces keep scrolling without visible scrollbars", () => {
+  assert.match(styles, /\*\s*\{[\s\S]*?scrollbar-width:\s*none/);
+  assert.match(styles, /\*::-webkit-scrollbar\s*\{[\s\S]*?display:\s*none/);
+  assert.match(styles, /\.full-tunnel-config\s*\{[\s\S]*?overflow:\s*auto/);
+  assert.match(styles, /\.full-tunnel-diagnostics pre\s*\{[\s\S]*?overflow:\s*auto/);
+});

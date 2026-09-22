@@ -102,7 +102,7 @@
     <!-- 主体内容 -->
     <div class="content">
 
-      <!-- 模式切换: 被控端 / 控制端 / 共享上网 -->
+      <!-- 模式切换: 被控端 / 控制端 / HTTP共享 / 全局共享 -->
       <div class="mode-tabs">
         <button class="mode-tab active" id="tab-controlled" data-mode="controlled">
           <i class="bi bi-pc-display-horizontal"></i> 被控
@@ -111,7 +111,10 @@
           <i class="bi bi-display"></i> 远程别人
         </button>
         <button class="mode-tab" id="tab-proxy" data-mode="proxy">
-          <i class="bi bi-globe2"></i> 共享上网
+          <i class="bi bi-globe2"></i> HTTP共享
+        </button>
+        <button class="mode-tab" id="tab-full-tunnel" data-mode="full-tunnel">
+          <i class="bi bi-shield-lock"></i> 全局共享
         </button>
       </div>
 
@@ -280,7 +283,7 @@
         </button>
       </div>
 
-      <!-- ============ 共享上网(代理) ============ -->
+      <!-- ============ HTTP共享(代理) ============ -->
       <div id="mode-proxy" class="hidden">
         <div class="ctrl-intro">
           <i class="bi bi-info-circle"></i>
@@ -333,11 +336,13 @@
         <button class="link-btn how-link" id="btn-proxy-help">
           <i class="bi bi-question-circle"></i> 对方怎么设置代理?
         </button>
+      </div>
 
-        <!-- ============ 全局共享(实验性 WireGuard 出口) ============ -->
+      <!-- ============ 全局共享(WireGuard 出口) ============ -->
+      <div id="mode-full-tunnel" class="hidden">
         <div class="full-tunnel-panel" id="full-tunnel-panel">
           <div class="section-divider"><span>WireGuard 全局共享</span></div>
-          <div class="role-switch" role="tablist" aria-label="共享上网角色">
+          <div class="role-switch" role="tablist" aria-label="全局共享角色">
             <button class="role-btn active" id="role-sharer" type="button" role="tab" aria-selected="true">
               <i class="bi bi-router"></i> 共享者
             </button>
