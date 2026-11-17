@@ -156,6 +156,22 @@
             <label>远程端口 <span class="hint">(默认即可,可修改)</span></label>
             <input type="text" id="remote-port" value="7002" />
           </div>
+
+          <!-- 传输协议: TCP(默认兼容) / QUIC(UDP, 高延迟链路建连更快) -->
+          <div class="field">
+            <label>传输协议</label>
+            <div class="transport-switch">
+              <button type="button" class="transport-opt active" data-transport="tcp" id="transport-tcp">
+                <i class="bi bi-lightning-charge-fill"></i> TCP
+                <span class="transport-tag">兼容</span>
+              </button>
+              <button type="button" class="transport-opt" data-transport="quic" id="transport-quic">
+                <i class="bi bi-rocket-takeoff-fill"></i> QUIC
+                <span class="transport-tag tag-fast">更快</span>
+              </button>
+            </div>
+            <div id="transport-hint" class="transport-hint hint-tcp">TCP 兼容性最好, 任何网络环境都可用</div>
+          </div>
         </div>
 
         <!-- 远程桌面状态检测 -->
@@ -209,6 +225,7 @@
         <div class="info-rows">
           <div class="info-row"><span>连接时长</span><b id="uptime">00:00:00</b></div>
           <div class="info-row"><span>服务器</span><b id="info-server">123.207.251.105</b></div>
+          <div class="info-row"><span>传输协议</span><b id="info-transport">TCP</b></div>
         </div>
 
         <button class="btn-danger" id="btn-disconnect">

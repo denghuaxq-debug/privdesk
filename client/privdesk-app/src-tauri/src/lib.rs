@@ -34,6 +34,26 @@ struct ConnectParams {
     port: String,
     token: String,
     remote: String,
+    // 传输协议: "tcp"(默认, 兼容性最好) 或 "quic"(UDP, 高延迟/抖动链路建连更快)
+    // 服务端需开启 quicBindPort 并在安全组放行对应 UDP 端口
+    #[serde(default)]
+    protocol: Option<String>,
+}
+
+// frpc 支持的传输协议取值: tcp / kcp / quic / websocket
+// 这里只对外暴露 tcp 与 quic, 其它值一律按 tcp 处理, 避免生成非法配置
+fn transport_protocol_line(params: &ConnectParams) -> &'static str {
+    let proto = params
+        .protocol
+        .as_deref()
+        .unwrap_or("tcp")
+        .trim()
+        .to_lowercase();
+    if proto == "quic" {
+        "transport.protocol = \"quic\""
+    } else {
+        "transport.protocol = \"tcp\""
+    }
 }
 
 fn valid_connection_params(params: &ConnectParams) -> bool {
@@ -225,6 +245,7 @@ auth.method = "token"
 auth.token = "{}"
 
 transport.tls.enable = true
+{}
 
 [[proxies]]
 name = "RDP-{}"
@@ -233,7 +254,13 @@ localIP = "127.0.0.1"
 localPort = {}
 remotePort = {}
 "#,
-        params.server, params.port, params.token, params.remote, LOCAL_PORT, params.remote
+        params.server,
+        params.port,
+        params.token,
+        transport_protocol_line(&params),
+        params.remote,
+        LOCAL_PORT,
+        params.remote
     );
     let config_path = dir.join("frpc.toml");
     if let Err(e) = fs::write(&config_path, config) {
@@ -1934,6 +1961,11 @@ fn start_full_tunnel_blocking(
         port: server_port.to_string(),
         token: token.to_string(),
         remote: params.remote_port.clone(),
+        // 沿用被控端保存的传输协议选择(老配置没有该字段时按 tcp)
+        protocol: profile
+            .get("protocol")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string()),
     };
     if !valid_connection_params(&connection) {
         return full_tunnel_error_with_diagnostics(

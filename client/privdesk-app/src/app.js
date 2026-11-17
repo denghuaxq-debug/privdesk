@@ -76,6 +76,15 @@ function toggleHidden(id, hidden) {
 }
 
 function bindEvents() {
+  // ---------- 传输协议切换 (TCP / QUIC) ----------
+  document.querySelectorAll(".transport-opt").forEach((el) => {
+    el.addEventListener("click", () => {
+      if (isConnecting) return; // 连接中不允许切换
+      setTransport(el.dataset.transport);
+    });
+  });
+  updateTransportHint();
+
   // ---------- 显示/隐藏密钥 ----------
   $("btn-toggle-token").addEventListener("click", () => {
     const input = $("token");
@@ -426,9 +435,43 @@ async function loadProfile() {
       if (p.port) $("server-port").value = p.port;
       if (p.token) $("token").value = p.token;
       if (p.remote) $("remote-port").value = p.remote;
+      // 恢复上次选择的传输协议
+      if (p.protocol) setTransport(p.protocol);
     }
   } catch (e) {
     console.error("load_profile", e);
+  }
+}
+
+// ---------- 传输协议 (TCP / QUIC) ----------
+// QUIC 基于 UDP, 在高延迟/抖动的链路上建连更快、抗丢包更好。
+// 注意: 服务端需开启 quicBindPort(默认 7001) 并在安全组放行该 UDP 端口。
+// 端口号由用户在"连接端口"里自行填写, 切换协议不会自动改端口。
+let currentTransport = "tcp";
+
+function getTransport() {
+  return currentTransport;
+}
+
+function setTransport(proto) {
+  currentTransport = proto === "quic" ? "quic" : "tcp";
+  document.querySelectorAll(".transport-opt").forEach((el) => {
+    const on = el.dataset.transport === currentTransport;
+    el.classList.toggle("active", on);
+    el.setAttribute("aria-selected", on ? "true" : "false");
+  });
+  updateTransportHint();
+}
+
+function updateTransportHint() {
+  const hint = $("transport-hint");
+  if (!hint) return;
+  if (currentTransport === "quic") {
+    hint.textContent = "QUIC 走 UDP, 建连更快、弱网更稳(需服务端开启 QUIC 并放行 UDP 端口)";
+    hint.className = "transport-hint hint-quic";
+  } else {
+    hint.textContent = "TCP 兼容性最好, 任何网络环境都可用";
+    hint.className = "transport-hint hint-tcp";
   }
 }
 
@@ -543,7 +586,7 @@ async function maybeAutoConnect() {
 
     // 后台静默连接, 不动按钮/不锁界面
     setStatus("connecting", "开机自动连接中...");
-    invoke("connect", { params: { server, port, token, remote } })
+    invoke("connect", { params: { server, port, token, remote, protocol: getTransport() } })
       .then((result) => {
         if (result && result.ok) {
           showConnected(server, remote);
@@ -608,6 +651,7 @@ async function onConnect() {
   }
 
   const { server, port, token, remote } = validation.value;
+  const protocol = getTransport();
 
   const btn = $("btn-connect");
   isConnecting = true;
@@ -620,11 +664,11 @@ async function onConnect() {
     const invoke = getInvoke();
     if (invoke) {
       const result = await invoke("connect", {
-        params: { server, port, token, remote },
+        params: { server, port, token, remote, protocol },
       });
       if (result && result.ok) {
-        // 连接成功: 保存连接信息到本地
-        try { await invoke("save_profile", { params: { server, port, token, remote } }); } catch (e) {}
+        // 连接成功: 保存连接信息到本地(含协议选择)
+        try { await invoke("save_profile", { params: { server, port, token, remote, protocol } }); } catch (e) {}
         showConnected(server, remote);
       } else {
         const msg = result ? result.message : "连接失败";
@@ -773,6 +817,13 @@ function showConnected(server, remotePort) {
   $("view-connected").classList.remove("hidden");
   $("remote-address").textContent = `${server}:${remotePort}`;
   $("info-server").textContent = server;
+  // 显示本次实际使用的传输协议
+  const tp = $("info-transport");
+  if (tp) {
+    const isQuic = getTransport() === "quic";
+    tp.textContent = isQuic ? "QUIC (UDP)" : "TCP";
+    tp.style.color = isQuic ? "#10b981" : "";
+  }
   currentRemoteAddr = `${server}:${remotePort}`;
   // 显示本机 Windows 用户名, 提示远程方登录时填这个
   loadUsername();
