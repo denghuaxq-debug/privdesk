@@ -387,16 +387,31 @@ async function checkRdp() {
   const invoke = getInvoke();
   if (!invoke) return; // 浏览器预览跳过
   try {
-    const enabled = await invoke("check_rdp_enabled");
+    // 优先用三重校验(注册表 + 服务 + 端口), 拿不到再退回旧布尔接口
+    let status = null;
+    try {
+      status = await invoke("check_rdp_status");
+    } catch (e) {
+      // 老版本后端没有该命令, 忽略
+    }
+
+    const ready = status ? !!status.ready : await invoke("check_rdp_enabled");
     // 状态没变化就不重复操作 DOM
-    if (enabled === lastRdpState) return;
-    lastRdpState = enabled;
-    if (enabled) {
+    if (ready === lastRdpState) return;
+    lastRdpState = ready;
+
+    if (ready) {
       $("rdp-status").classList.add("hidden");
       $("rdp-ok").classList.remove("hidden");
     } else {
       $("rdp-ok").classList.add("hidden");
       $("rdp-status").classList.remove("hidden");
+      // 具体是哪一环没通过, 直接提示出来, 避免用户反复点"一键开启"
+      const warn = $("rdp-warn-text");
+      if (warn) {
+        warn.textContent =
+          (status && status.message) || "系统远程桌面未开启,对方将无法连接";
+      }
     }
   } catch (e) {
     console.error("check_rdp", e);

@@ -2337,11 +2337,33 @@ fn resolve_bundled(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
     None
 }
 
-// ========== 命令: 检测远程桌面(RDP)是否已开启 ==========
+// ========== 远程桌面(RDP)就绪状态检测 ==========
+//
+// 只看注册表 fDenyTSConnections 是不够的: 注册表允许不代表真的能连上。
+// 常见"明明开了却连不上"的原因有三种, 这里逐项校验:
+//   1. 注册表 fDenyTSConnections != 0        -> 策略层面禁止了 RDP
+//   2. 服务 TermService 未运行               -> 3389 不会监听
+//   3. 3389 端口未处于 LISTEN                -> 不可达(服务刚启动/被占用/异常)
+// 三者全通过才认为"就绪"。
+#[derive(Debug, Serialize)]
+struct RdpStatus {
+    /// 三者全部满足 -> 对方可以连进来
+    ready: bool,
+    /// 注册表是否允许远程桌面(fDenyTSConnections == 0)
+    registry_ok: bool,
+    /// TermService 服务是否在运行
+    service_running: bool,
+    /// 3389 是否在监听
+    port_listening: bool,
+    /// 面向用户的简短说明(失败时指出具体哪一环)
+    message: String,
+}
+
+// 精确解析 reg query 输出里的 fDenyTSConnections 值。
+// 不能简单用 contains("0x0"): 若值为 0x10 会漏判, 且整段输出里
+// 其它键(如 AllowRemoteRPC)也可能含 "0x0", 导致误判为已开启。
 #[cfg(windows)]
-#[tauri::command]
-fn check_rdp_enabled() -> bool {
-    // 读取注册表 fDenyTSConnections, 0 表示允许远程桌面
+fn read_rdp_deny_flag() -> Option<u32> {
     let mut cmd = Command::new("reg");
     cmd.args([
         "query",
@@ -2350,13 +2372,81 @@ fn check_rdp_enabled() -> bool {
         "fDenyTSConnections",
     ]);
     hide_window(&mut cmd);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        // 形如: "    fDenyTSConnections    REG_DWORD    0x0"
+        let mut it = line.split_whitespace();
+        let (Some(name), Some(kind), Some(value)) = (it.next(), it.next(), it.next()) else {
+            continue;
+        };
+        if name.eq_ignore_ascii_case("fDenyTSConnections") && kind.eq_ignore_ascii_case("REG_DWORD") {
+            let hex = value.trim_start_matches("0x").trim_start_matches("0X");
+            return u32::from_str_radix(hex, 16).ok();
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+fn is_term_service_running() -> bool {
+    // sc query TermService 输出含 "RUNNING"
+    let mut cmd = Command::new("sc");
+    cmd.args(["query", "TermService"]);
+    hide_window(&mut cmd);
     match cmd.output() {
-        Ok(out) => {
-            let s = String::from_utf8_lossy(&out.stdout);
-            // 输出含 0x0 表示已开启
-            s.contains("0x0")
+        Ok(o) => {
+            let s = String::from_utf8_lossy(&o.stdout);
+            s.contains("RUNNING")
         }
         Err(_) => false,
+    }
+}
+
+#[cfg(windows)]
+fn is_port_listening(port: u16) -> bool {
+    // 连本机回环: 能建立 TCP 连接即说明该端口正在监听
+    use std::net::{SocketAddr, TcpStream};
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
+}
+
+// ========== 命令: 检测远程桌面(RDP)是否已开启 ==========
+// 保留原布尔返回值给前端旧逻辑使用(仅表示“注册表允许”)。
+#[cfg(windows)]
+#[tauri::command]
+fn check_rdp_enabled() -> bool {
+    matches!(read_rdp_deny_flag(), Some(0))
+}
+
+// ========== 命令: 检测远程桌面(RDP)就绪状态(三重校验, 供界面提示用) ==========
+#[cfg(windows)]
+#[tauri::command]
+fn check_rdp_status() -> RdpStatus {
+    let registry_ok = matches!(read_rdp_deny_flag(), Some(0));
+    let service_running = is_term_service_running();
+    let port_listening = is_port_listening(3389);
+    let ready = registry_ok && service_running && port_listening;
+
+    let message = if ready {
+        "远程桌面已就绪".to_string()
+    } else if !registry_ok {
+        "系统未允许远程桌面, 需开启后再连接".to_string()
+    } else if !service_running {
+        "远程桌面服务未运行, 点\"一键开启\"或重启系统后重试".to_string()
+    } else {
+        "远程桌面服务已运行但 3389 端口未监听, 请重启远程桌面服务".to_string()
+    };
+
+    RdpStatus {
+        ready,
+        registry_ok,
+        service_running,
+        port_listening,
+        message,
     }
 }
 
@@ -2375,6 +2465,24 @@ fn check_rdp_enabled() -> bool {
         }
     }
     false
+}
+
+// macOS 没有 TermService/3389 的概念, 复用端口监听结果给出等价结构
+#[cfg(not(windows))]
+#[tauri::command]
+fn check_rdp_status() -> RdpStatus {
+    let listening = check_rdp_enabled();
+    RdpStatus {
+        ready: listening,
+        registry_ok: listening,
+        service_running: listening,
+        port_listening: listening,
+        message: if listening {
+            "屏幕共享已就绪".to_string()
+        } else {
+            "屏幕共享未开启, 需在系统设置中开启".to_string()
+        },
+    }
 }
 
 // ========== 命令: 一键开启远程桌面(Windows, 需管理员权限会弹UAC) ==========
@@ -2512,6 +2620,7 @@ pub fn run() {
             load_profile,
             update_tray_color,
             check_rdp_enabled,
+            check_rdp_status,
             enable_rdp,
             open_log_dir,
             get_username,
