@@ -47,7 +47,7 @@ test("RDP capability is refreshed after a user action, not by installing unknown
 });
 
 test("Capability panel stays hidden for a plain professional edition", () => {
-  // 展示条件是 "家庭版 或 装了 RDP Wrapper"; 普通专业版不显示, 避免干扰主流程
+  // 展示条件是 "家庭版 或 Wrapper 生效 或 目录里有残留文件"; 普通专业版不显示, 避免干扰主流程
   const renderStart = app.indexOf("function renderRdpCapability(");
   assert.ok(renderStart >= 0, "renderRdpCapability should exist");
   const renderEnd = app.indexOf("async function checkRdp()", renderStart);
@@ -56,6 +56,21 @@ test("Capability panel stays hidden for a plain professional edition", () => {
   assert.match(renderer, /wrapper_installed/);
   assert.match(renderer, /showCapability/);
   assert.match(renderer, /classList\.toggle\("hidden"/);
+});
+
+test("Source detection reads ini and only lets RDP Wrapper mean installed when it is installed", () => {
+  // 文件存在 != 已安装生效: 必须同时校验服务 / IFEO 注入 / System32 dll,
+  // 否则"扔了两个文件却从未安装"的机器会被误报成已安装。
+  assert.match(rust, /fn rdp_wrapper_files_present\(\) -> bool/);
+  assert.match(rust, /fn rdp_wrapper_service_registered\(\) -> bool/);
+  assert.match(rust, /fn rdp_wrapper_ifeo_injected\(\) -> bool/);
+  assert.match(rust, /fn rdp_wrapper_system32_dll\(\) -> bool/);
+  assert.match(rust, /wrapper_files_present: bool/);
+  assert.match(rust, /Image File Execution Options/);
+  assert.match(rust, /System32/);
+  // 残留文件时界面要给出"仅残留文件", 而不是"已安装"
+  assert.match(app, /wrapper_files_present/);
+  assert.match(app, /仅残留文件/);
 });
 
 test("RDP readiness keeps the three-way check (registry + service + port)", () => {

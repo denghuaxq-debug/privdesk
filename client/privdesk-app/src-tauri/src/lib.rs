@@ -2366,8 +2366,10 @@ struct RdpStatus {
     edition: String,
     /// 是否原生支持远程桌面(家庭版为 false)
     native_supported: bool,
-    /// 是否安装了 RDP Wrapper
+    /// RDP Wrapper 是否真正安装生效(服务 / IFEO 注入 / System32 有 dll)
     wrapper_installed: bool,
+    /// 安装目录里是否有 rdpwrap.dll 等文件(存在不等于生效, 可能只是残留)
+    wrapper_files_present: bool,
     /// RDP Wrapper 是否在正常监听(wrapper 已装 + 服务运行 + 3389 监听)
     wrapper_listening: bool,
     /// rdpwrap.ini 是否声明支持当前 termsrv.dll 版本
@@ -2520,10 +2522,64 @@ fn rdp_wrapper_dirs() -> Vec<PathBuf> {
 }
 
 #[cfg(windows)]
-fn rdp_wrapper_installed() -> bool {
+fn rdp_wrapper_files_present() -> bool {
     rdp_wrapper_dirs()
         .iter()
         .any(|directory| directory.join("rdpwrap.dll").exists())
+}
+
+// RDP Wrapper 的安装程序会做四件事, 只有"文件在目录里"是四项里最弱的一项:
+//   1. 安装目录里有 rdpwrap.dll / rdpwrap.ini
+//   2. 注册 Windows 服务 rdpwrap
+//   3. 在 svchost.exe 的 IFEO 下写入 rdpwrap.dll 注入项
+//   4. 把 rdpwrap.dll 复制到 System32
+// 只按第 1 项判断会把"扔了两个文件但从未安装"的残留误报成已安装,
+// 所以这里要求第 1 项 + 其余任意一项。
+#[cfg(windows)]
+fn rdp_wrapper_installed() -> bool {
+    if !rdp_wrapper_files_present() {
+        return false;
+    }
+    rdp_wrapper_service_registered() || rdp_wrapper_ifeo_injected() || rdp_wrapper_system32_dll()
+}
+
+// 服务是否注册(存在即视为注册, 不要求正在运行: 未运行的注入会在需要时由系统加载)
+#[cfg(windows)]
+fn rdp_wrapper_service_registered() -> bool {
+    let mut cmd = Command::new("sc");
+    cmd.args(["query", "rdpwrap"]);
+    hide_window(&mut cmd);
+    match cmd.output() {
+        Ok(out) => {
+            let text = String::from_utf8_lossy(&out.stdout);
+            !text.is_empty() && out.status.success()
+        }
+        Err(_) => false,
+    }
+}
+
+// svchost.exe 的 IFEO 键下是否有 rdpwrap.dll 值(注入点)
+#[cfg(windows)]
+fn rdp_wrapper_ifeo_injected() -> bool {
+    let mut cmd = Command::new("reg");
+    cmd.args([
+        "query",
+        r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\svchost.exe",
+        "/v",
+        "rdpwrap.dll",
+    ]);
+    hide_window(&mut cmd);
+    match cmd.output() {
+        Ok(out) => out.status.success(),
+        Err(_) => false,
+    }
+}
+
+#[cfg(windows)]
+fn rdp_wrapper_system32_dll() -> bool {
+    env::var_os("windir")
+        .map(|windir| PathBuf::from(windir).join("System32").join("rdpwrap.dll").exists())
+        .unwrap_or(false)
 }
 
 // rdpwrap.ini 全文(静态, 缓存): 用来判断 ini 是否声明支持当前 termsrv.dll
@@ -2611,6 +2667,7 @@ fn check_rdp_status() -> RdpStatus {
     let native_supported = !is_non_professional_edition(&system.product_name);
 
     let wrapper_installed = rdp_wrapper_installed();
+    let wrapper_files_present = rdp_wrapper_files_present();
     // termsrv 版本与 ini 内容只在装了 Wrapper 时才探测/解析
     let termsrv_version = if wrapper_installed {
         termsrv_dll_version().to_string()
@@ -2667,6 +2724,7 @@ fn check_rdp_status() -> RdpStatus {
         edition,
         native_supported,
         wrapper_installed,
+        wrapper_files_present,
         wrapper_listening,
         wrapper_supported,
         termsrv_version,
@@ -2733,6 +2791,7 @@ fn check_rdp_status() -> RdpStatus {
         edition: "macOS".to_string(),
         native_supported: true,
         wrapper_installed: false,
+        wrapper_files_present: false,
         wrapper_listening: false,
         wrapper_supported: false,
         termsrv_version: String::new(),

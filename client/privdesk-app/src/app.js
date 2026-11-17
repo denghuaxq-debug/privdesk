@@ -385,14 +385,15 @@ let lastRdpState = null; // 记录上次就绪状态, 避免重复操作 DOM
 let lastRdpCapability = null; // 最近一次的完整检测结果(含系统版本/RDP Wrapper)
 
 // 渲染「RDP 环境检测」面板。
-// 只在两种情况下展示: 家庭版(原生不支持远程桌面) 或 装了 RDP Wrapper。
-// 普通专业版用户不关心这些细节, 隐藏即可, 避免干扰主流程。
+// 展示条件: 家庭版(原生不支持远程桌面) / RDP Wrapper 真正生效 / 目录里只是残留文件。
+// 普通专业版且没有 Wrapper 痕迹时不展示, 避免干扰主流程。
 function renderRdpCapability(status) {
   const panel = $("rdp-capability");
   if (!panel) return;
   const nativeSupported = !!status.native_supported;
   const wrapperInstalled = !!status.wrapper_installed;
-  const showCapability = !nativeSupported || wrapperInstalled;
+  const wrapperFilesPresent = !!status.wrapper_files_present;
+  const showCapability = !nativeSupported || wrapperInstalled || wrapperFilesPresent;
   panel.classList.toggle("hidden", !showCapability);
   if (!showCapability) return;
 
@@ -403,7 +404,14 @@ function renderRdpCapability(status) {
   const edition = $("rdp-edition");
   if (edition) edition.textContent = status.edition || "未知";
   const installed = $("rdp-wrapper-installed");
-  if (installed) installed.textContent = wrapperInstalled ? "已安装" : "未安装";
+  if (installed) {
+    // 文件在目录里但没注册服务 / 没注入, 属于残留, 不能报"已安装"
+    installed.textContent = wrapperInstalled
+      ? "已安装"
+      : wrapperFilesPresent
+        ? "仅残留文件"
+        : "未安装";
+  }
   const listening = $("rdp-wrapper-listening");
   if (listening) listening.textContent = wrapperListening ? "正在监听" : "未监听";
   const supported = $("rdp-wrapper-supported");
@@ -422,6 +430,9 @@ function renderRdpCapability(status) {
       recommendation.textContent = wrapperReady
         ? "当前 RDP Wrapper 已确认兼容。优先使用 PrivDesk 自带远程或 WireGuard 内网访问。"
         : "未确认 RDP Wrapper 与当前系统兼容, 不自动安装第三方组件。建议优先使用 PrivDesk 自带远程或 WireGuard 内网访问。";
+    } else if (wrapperFilesPresent) {
+      recommendation.textContent =
+        "检测到 RDP Wrapper 残留文件, 但未注册服务或注入, 未生效。专业版无需安装; 如需多会话再手动安装。";
     } else {
       recommendation.textContent =
         "Windows 专业版可使用系统自带远程桌面; 也可以通过 PrivDesk 或 WireGuard 内网访问。";
