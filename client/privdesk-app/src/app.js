@@ -277,17 +277,24 @@ function bindEvents() {
   });
   $("cb-autostart").addEventListener("change", async (e) => {
     const invoke = getInvoke();
-    if (invoke) {
-      try {
-        const ok = await invoke("set_autostart", { enable: e.target.checked });
-        if (!ok) {
-          // 设置失败, 回滚勾选状态
-          e.target.checked = !e.target.checked;
-        }
-      } catch (err) {
-        console.error("set_autostart", err);
-        e.target.checked = !e.target.checked;
+    if (!invoke) return;
+    const wanted = e.target.checked;
+    try {
+      const result = await invoke("set_autostart", {
+        enable: wanted,
+        params: wanted ? readConnectionForm() : null,
+      });
+      // 后端返回 { ok, message }: 注册计划任务需要管理员授权, 可能被取消
+      if (!result || !result.ok) {
+        e.target.checked = !wanted; // 回滚勾选状态
+        setStatus("error", (result && result.message) || "设置开机自启失败");
+        return;
       }
+      setAutostartHint(wanted, result.message);
+    } catch (err) {
+      console.error("set_autostart", err);
+      e.target.checked = !wanted;
+      setStatus("error", "设置开机自启失败");
     }
   });
 
@@ -302,10 +309,33 @@ async function initAutostart() {
     try {
       const enabled = await invoke("get_autostart");
       $("cb-autostart").checked = !!enabled;
+      setAutostartHint(!!enabled, "");
     } catch (e) {
       console.error("get_autostart", e);
     }
   }
+}
+
+// 从表单读出一组连接参数(未校验), 供开启无人值守时传给后端
+function readConnectionForm() {
+  return {
+    server: $("server-addr").value.trim(),
+    port: $("server-port").value.trim(),
+    token: $("token").value.trim(),
+    remote: $("remote-port").value.trim(),
+    protocol: getTransport(),
+  };
+}
+
+// 无人值守开关的说明文案: 开启后开机(即使停在登录界面)也能远程连入
+function setAutostartHint(enabled, message) {
+  const label = $("lb-autostart") || $("cb-autostart");
+  if (!label) return;
+  label.title =
+    message ||
+    (enabled
+      ? "已开启: 开机会在登录前自动建立隧道, 无需登录即可远程连入"
+      : "开启后: 开机即自动建立隧道, 停在登录界面也能远程连入(需一次管理员授权)");
 }
 
 // ========== 主题切换 ==========

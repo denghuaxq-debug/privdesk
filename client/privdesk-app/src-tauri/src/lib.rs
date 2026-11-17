@@ -16,6 +16,8 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager,
 };
+// 开机自启(无人值守)在 Windows 上改用计划任务实现, 不再依赖 Run 键
+#[cfg(not(windows))]
 use tauri_plugin_autostart::ManagerExt;
 
 // ---------- 全局状态 ----------
@@ -154,6 +156,27 @@ fn log_dir(app: &tauri::AppHandle) -> PathBuf {
     dir
 }
 
+// 确保 app 数据目录下存在可用的 frpc 可执行文件, 返回其路径
+// 首次运行(未连接过)时 frpc 还没有被拷贝出来, 无人值守任务也需要它
+fn ensure_frpc(app: &tauri::AppHandle) -> Option<PathBuf> {
+    let dir = app_dir(app);
+    let _ = fs::create_dir_all(&dir);
+    let frpc_path = dir.join(FRPC_FILENAME);
+    if !frpc_path.exists() {
+        if let Ok(resource) = app.path().resource_dir() {
+            let bundled = resource.join(FRPC_FILENAME);
+            if bundled.exists() {
+                let _ = fs::copy(&bundled, &frpc_path);
+            }
+        }
+    }
+    if frpc_path.exists() {
+        Some(frpc_path)
+    } else {
+        None
+    }
+}
+
 #[cfg(windows)]
 fn hide_window(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
@@ -205,6 +228,34 @@ fn connect_blocking(app: tauri::AppHandle, params: ConnectParams) -> ConnectResu
             message: "连接参数格式不正确".into(),
         };
     }
+
+    // 无人值守隧道由 SYSTEM 计划任务在开机时拉起, 登录后 app 再连一次会重复占端口。
+    // 参数一致时直接复用已建立的隧道; 参数不一致则提示先关掉开机自启。
+    #[cfg(windows)]
+    if read_unattended_state(&app).map(|state| state.enabled).unwrap_or(false)
+        && unattended_process_running()
+    {
+        let state = read_unattended_state(&app);
+        let same = state
+            .as_ref()
+            .map(|s| {
+                s.server == params.server
+                    && s.port == params.port
+                    && s.remote == params.remote
+            })
+            .unwrap_or(false);
+        if same {
+            return ConnectResult {
+                ok: true,
+                message: "已由无人值守隧道保持连接(无需登录即可远程)".into(),
+            };
+        }
+        return ConnectResult {
+            ok: false,
+            message: "开机自启的无人值守隧道正在使用另一组服务器设置, 请先取消开机自启再连接".into(),
+        };
+    }
+
     let state = app.state::<AppState>();
     stop_frpc(&state);
 
@@ -435,22 +486,292 @@ fn is_connected(state: tauri::State<AppState>) -> bool {
     }
 }
 
+// ========== 无人值守隧道(开机即连, 无需登录) ==========
+// 背景: 原来的开机自启走注册表 Run 键, 由资源管理器在"用户登录后"触发,
+// 因此设了登录密码的机器必须先登录才会启动, 停在登录界面时连不进去。
+// 改为注册 SYSTEM 身份的 AtStartup 计划任务: 开机即拉起 frpc, 与是否登录无关。
+#[cfg(windows)]
+const UNATTENDED_TASK_NAME: &str = "PrivDesk-Unattended";
+
+// 记录无人值守是否已开启。非管理员无法查询计划任务(schtasks /query 会被拒绝),
+// 所以用 app 目录里的 marker 文件作为状态来源。
+#[cfg(windows)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct UnattendedState {
+    enabled: bool,
+    #[serde(default)]
+    server: String,
+    #[serde(default)]
+    port: String,
+    #[serde(default)]
+    remote: String,
+    #[serde(default)]
+    protocol: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct AutostartResult {
+    ok: bool,
+    message: String,
+}
+
+#[cfg(windows)]
+fn unattended_dir(app: &tauri::AppHandle) -> PathBuf {
+    let dir = app_dir(app).join("unattended");
+    let _ = fs::create_dir_all(&dir);
+    dir
+}
+
+#[cfg(windows)]
+fn unattended_config_path(app: &tauri::AppHandle) -> PathBuf {
+    unattended_dir(app).join("frpc.toml")
+}
+
+#[cfg(windows)]
+fn unattended_state_path(app: &tauri::AppHandle) -> PathBuf {
+    app_dir(app).join("unattended.json")
+}
+
+#[cfg(windows)]
+fn read_unattended_state(app: &tauri::AppHandle) -> Option<UnattendedState> {
+    let text = fs::read_to_string(unattended_state_path(app)).ok()?;
+    serde_json::from_str::<UnattendedState>(&text).ok()
+}
+
+#[cfg(windows)]
+fn write_unattended_state(app: &tauri::AppHandle, state: &UnattendedState) -> bool {
+    let path = unattended_state_path(app);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    match serde_json::to_string(state) {
+        Ok(text) => fs::write(path, text).is_ok(),
+        Err(_) => false,
+    }
+}
+
+#[cfg(windows)]
+fn clear_unattended_state(app: &tauri::AppHandle) {
+    let _ = fs::remove_file(unattended_state_path(app));
+    let _ = fs::remove_file(unattended_config_path(app));
+}
+
+// 生成 System 任务用的 frpc 配置。注意:
+// 1. 必须无 BOM, 否则 frpc 会报 "toml: invalid character at start of key"
+// 2. 服务化后拿不到 stdout, 必须用 log.to 让 frpc 自己写日志(路径用正斜杠)
+#[cfg(windows)]
+fn build_unattended_config(params: &ConnectParams, log_path: &str) -> String {
+    format!(
+        "serverAddr = \"{}\"\nserverPort = {}\n\nauth.method = \"token\"\nauth.token = \"{}\"\n\ntransport.tls.enable = true\n{}\n\nlog.to = \"{}\"\nlog.level = \"info\"\nlog.maxDays = 3\n\n[[proxies]]\nname = \"RDP-{}\"\ntype = \"tcp\"\nlocalIP = \"127.0.0.1\"\nlocalPort = {}\nremotePort = {}\n",
+        params.server,
+        params.port,
+        params.token,
+        transport_protocol_line(params),
+        log_path,
+        params.remote,
+        LOCAL_PORT,
+        params.remote
+    )
+}
+
+// 是否有以 SYSTEM 身份(Session 0)运行的 frpc
+#[cfg(windows)]
+fn unattended_process_running() -> bool {
+    let mut cmd = Command::new("tasklist");
+    cmd.args(["/fi", "imagename eq frpc.exe", "/fo", "csv", "/nh"]);
+    hide_window(&mut cmd);
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(_) => return false,
+    };
+    let text = String::from_utf8_lossy(&output.stdout);
+    for line in text.lines() {
+        let cols = line
+            .split("\",\"")
+            .map(|c| c.trim_matches('"').trim())
+            .collect::<Vec<_>>();
+        // 列: 映像名称, PID, 会话名, 会话#, 内存
+        if cols.len() >= 4 && (cols[2].eq_ignore_ascii_case("Services") || cols[3] == "0") {
+            return true;
+        }
+    }
+    false
+}
+
+// 注册并启动 SYSTEM 计划任务(需要一次管理员授权)
+#[cfg(windows)]
+fn register_unattended_task(
+    app: &tauri::AppHandle,
+    params: &ConnectParams,
+) -> Result<(), String> {
+    let frpc_path = ensure_frpc(app).ok_or_else(|| "未找到 frpc.exe, 无法创建无人值守任务".to_string())?;
+    let config_path = unattended_config_path(app);
+    let log_path = unattended_dir(app).join("frpc.log");
+    let log_text = log_path.to_string_lossy().replace('\\', "/");
+    let contents = build_unattended_config(params, &log_text);
+    // 无 BOM 写入: fs::write 直接写字节, 不会加 BOM
+    fs::write(&config_path, contents)
+        .map_err(|e| format!("写入无人值守配置失败: {}", e))?;
+
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'\n\
+         $taskName = {}\n\
+         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {{\n\
+           Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue\n\
+           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false\n\
+         }}\n\
+         $action = New-ScheduledTaskAction -Execute {} -Argument {} -WorkingDirectory {}\n\
+         $trigger = New-ScheduledTaskTrigger -AtStartup\n\
+         $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest\n\
+         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew\n\
+         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'PrivDesk 无人值守隧道: 开机在用户登录前建立远程连接' | Out-Null\n\
+         Start-ScheduledTask -TaskName $taskName\n\
+         Start-Sleep -Seconds 2\n\
+         $info = Get-ScheduledTaskInfo -TaskName $taskName\n\
+         Write-Output ('TaskState=' + (Get-ScheduledTask -TaskName $taskName).State)\n\
+         Write-Output ('LastTaskResult=' + $info.LastTaskResult)\n",
+        powershell_quote(UNATTENDED_TASK_NAME),
+        powershell_quote(&frpc_path.to_string_lossy()),
+        powershell_quote(&format!("-c \"{}\"", config_path.to_string_lossy())),
+        powershell_quote(&unattended_dir(app).to_string_lossy()),
+    );
+    if run_elevated_network_script(&script, None) {
+        Ok(())
+    } else {
+        Err("注册无人值守任务失败, 可能取消了管理员授权".into())
+    }
+}
+
+#[cfg(windows)]
+fn unregister_unattended_task() -> Result<(), String> {
+    let script = format!(
+        "$ErrorActionPreference = 'Stop'\n\
+         $taskName = {}\n\
+         if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {{\n\
+           Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue\n\
+           Unregister-ScheduledTask -TaskName $taskName -Confirm:$false\n\
+         }}\n\
+         Write-Output 'TaskRemoved'\n",
+        powershell_quote(UNATTENDED_TASK_NAME)
+    );
+    if run_elevated_network_script(&script, None) {
+        Ok(())
+    } else {
+        Err("移除无人值守任务失败, 可能取消了管理员授权".into())
+    }
+}
+
 // ========== 命令: 设置开机自启 ==========
 #[tauri::command]
-fn set_autostart(app: tauri::AppHandle, enable: bool) -> bool {
-    let manager = app.autolaunch();
-    let result = if enable {
-        manager.enable()
-    } else {
-        manager.disable()
+fn set_autostart(
+    app: tauri::AppHandle,
+    enable: bool,
+    params: Option<ConnectParams>,
+) -> AutostartResult {
+    #[cfg(windows)]
+    {
+        if enable {
+            let params = match params.or_else(|| read_profile_params(&app)) {
+                Some(params) if valid_connection_params(&params) => params,
+                _ => {
+                    return AutostartResult {
+                        ok: false,
+                        message: "请先填好服务器/端口/密钥/远程端口再开启".into(),
+                    }
+                }
+            };
+            if let Err(message) = register_unattended_task(&app, &params) {
+                return AutostartResult { ok: false, message };
+            }
+            write_unattended_state(
+                &app,
+                &UnattendedState {
+                    enabled: true,
+                    server: params.server.clone(),
+                    port: params.port.clone(),
+                    remote: params.remote.clone(),
+                    protocol: params.protocol.clone(),
+                },
+            );
+            AutostartResult {
+                ok: true,
+                message: "已开启: 开机后无需登录即自动建立隧道".into(),
+            }
+        } else {
+            // 任务本身可能早已不存在(用户手动删过), 因此失败也继续清理状态
+            let removed = unregister_unattended_task();
+            clear_unattended_state(&app);
+            match removed {
+                Ok(()) => AutostartResult {
+                    ok: true,
+                    message: "已关闭: 开机不再自动连接".into(),
+                },
+                Err(message) => AutostartResult { ok: false, message },
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = params;
+        let manager = app.autolaunch();
+        let result = if enable {
+            manager.enable()
+        } else {
+            manager.disable()
+        };
+        AutostartResult {
+            ok: result.is_ok(),
+            message: if result.is_ok() {
+                "已更新开机自启".into()
+            } else {
+                "设置开机自启失败".into()
+            },
+        }
+    }
+}
+
+// 从本地保存的连接信息读回参数(开启自启时若前端未传)
+fn read_profile_params(app: &tauri::AppHandle) -> Option<ConnectParams> {
+    let text = fs::read_to_string(app_dir(app).join("profile.json")).ok()?;
+    let value = serde_json::from_str::<serde_json::Value>(&text).ok()?;
+    let field = |key: &str| {
+        value
+            .get(key)
+            .and_then(|item| item.as_str())
+            .unwrap_or("")
+            .to_string()
     };
-    result.is_ok()
+    let protocol = value
+        .get("protocol")
+        .and_then(|item| item.as_str())
+        .map(|item| item.to_string());
+    let params = ConnectParams {
+        server: field("server"),
+        port: field("port"),
+        token: field("token"),
+        remote: field("remote"),
+        protocol,
+    };
+    if valid_connection_params(&params) {
+        Some(params)
+    } else {
+        None
+    }
 }
 
 // ========== 命令: 查询开机自启状态 ==========
 #[tauri::command]
 fn get_autostart(app: tauri::AppHandle) -> bool {
-    app.autolaunch().is_enabled().unwrap_or(false)
+    #[cfg(windows)]
+    {
+        read_unattended_state(&app)
+            .map(|state| state.enabled)
+            .unwrap_or(false)
+    }
+    #[cfg(not(windows))]
+    {
+        app.autolaunch().is_enabled().unwrap_or(false)
+    }
 }
 
 // ========== 命令: 保存连接信息到本地 ==========
@@ -2758,6 +3079,63 @@ mod rdp_capability_tests {
         assert!(ini_declares_section(ini, "10.0.26100.8115"));
         assert!(!ini_declares_section(ini, "10.0.19041.1"));
         assert!(!ini_declares_section(ini, ""));
+    }
+}
+
+// ========== 无人值守隧道: 配置生成与状态解析单测 ==========
+#[cfg(all(test, windows))]
+mod unattended_tests {
+    use super::{build_unattended_config, ConnectParams, UnattendedState};
+
+    fn params() -> ConnectParams {
+        ConnectParams {
+            server: "111.228.28.207".into(),
+            port: "7000".into(),
+            token: "server-token-123".into(),
+            remote: "9680".into(),
+            protocol: None,
+        }
+    }
+
+    // 服务化后拿不到 stdout, 配置里必须带 log.to, 否则日志全丢
+    #[test]
+    fn writes_a_frpc_config_that_logs_to_a_file() {
+        let config = build_unattended_config(&params(), "C:/Users/x/unattended/frpc.log");
+        assert!(config.contains("serverAddr = \"111.228.28.207\""));
+        assert!(config.contains("serverPort = 7000"));
+        assert!(config.contains("log.to = \"C:/Users/x/unattended/frpc.log\""));
+        assert!(config.contains("log.level = \"info\""));
+        assert!(config.contains("name = \"RDP-9680\""));
+        assert!(config.contains("localPort = 3389"));
+        assert!(config.contains("remotePort = 9680"));
+        assert!(config.contains("transport.tls.enable = true"));
+    }
+
+    #[test]
+    fn respects_the_quic_transport_choice() {
+        let mut quic = params();
+        quic.protocol = Some("quic".into());
+        assert!(build_unattended_config(&quic, "x.log").contains("transport.protocol = \"quic\""));
+        // 未指定协议时回落 tcp, 配置里始终带 transport.protocol 行
+        assert!(build_unattended_config(&params(), "x.log").contains("transport.protocol = \"tcp\""));
+    }
+
+    // marker 文件是"是否已开启"的唯一来源: 非管理员查不到计划任务
+    #[test]
+    fn unattended_state_round_trips_through_json() {
+        let state = UnattendedState {
+            enabled: true,
+            server: "111.228.28.207".into(),
+            port: "7000".into(),
+            remote: "9680".into(),
+            protocol: Some("tcp".into()),
+        };
+        let text = serde_json::to_string(&state).unwrap();
+        let parsed: UnattendedState = serde_json::from_str(&text).unwrap();
+        assert!(parsed.enabled);
+        assert_eq!(parsed.server, "111.228.28.207");
+        assert_eq!(parsed.remote, "9680");
+        assert_eq!(parsed.protocol.as_deref(), Some("tcp"));
     }
 }
 
