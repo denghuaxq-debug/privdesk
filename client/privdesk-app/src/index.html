@@ -182,6 +182,17 @@
           </div>
           <button class="btn-enable-rdp" id="btn-enable-rdp">一键开启</button>
         </div>
+        <!-- RDP 环境检测: 系统版本 / 是否原生支持 / RDP Wrapper 状态 -->
+        <div id="rdp-capability" class="rdp-capability hidden" role="status" aria-live="polite">
+          <div class="rdp-capability-title"><i class="bi bi-shield-check"></i> RDP 环境检测</div>
+          <div class="rdp-capability-grid">
+            <span>系统版本</span><b id="rdp-edition">检测中</b>
+            <span>RDP Wrapper</span><b id="rdp-wrapper-installed">检测中</b>
+            <span>监听状态</span><b id="rdp-wrapper-listening">检测中</b>
+            <span>版本支持</span><b id="rdp-wrapper-supported">检测中</b>
+          </div>
+          <div id="rdp-recommendation" class="rdp-recommendation"></div>
+        </div>
         <div id="rdp-ok" class="rdp-ok hidden">
           <i class="bi bi-check-circle-fill"></i>
           <span id="rdp-ok-text">远程桌面已开启</span>

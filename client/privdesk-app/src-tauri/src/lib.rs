@@ -7,7 +7,7 @@ use std::env;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
@@ -90,6 +90,7 @@ mod connection_param_tests {
             port: "7000".into(),
             token: "server-token-123".into(),
             remote: "7002".into(),
+            protocol: None,
         }
     }
 
@@ -2337,7 +2338,7 @@ fn resolve_bundled(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
     None
 }
 
-// ========== 远程桌面(RDP)就绪状态检测 ==========
+// ========== 远程桌面(RDP)就绪状态 + 环境检测 ==========
 //
 // 只看注册表 fDenyTSConnections 是不够的: 注册表允许不代表真的能连上。
 // 常见"明明开了却连不上"的原因有三种, 这里逐项校验:
@@ -2345,9 +2346,15 @@ fn resolve_bundled(app: &tauri::AppHandle, name: &str) -> Option<PathBuf> {
 //   2. 服务 TermService 未运行               -> 3389 不会监听
 //   3. 3389 端口未处于 LISTEN                -> 不可达(服务刚启动/被占用/异常)
 // 三者全通过才认为"就绪"。
+//
+// 同时把"这台机器能不能被远程"的环境一并展示出来:
+//   - 系统版本(如 Windows 10 Pro 26H2; Win11 的 ProductName 仍是 "Windows 10", 要按 build 号纠正)
+//   - 是否原生支持(家庭版没有可用的 TermService 远程桌面)
+//   - RDP Wrapper(家庭版常用的第三方补丁) 是否安装 / 是否监听 / ini 是否支持当前 termsrv.dll
+// 这些只依赖本机静态状态, 用 OnceLock 缓存, 避免 30 秒轮询反复探测。
 #[derive(Debug, Serialize)]
 struct RdpStatus {
-    /// 三者全部满足 -> 对方可以连进来
+    /// 对方是否可以连进来(专业版看三重校验, 家庭版看 RDP Wrapper)
     ready: bool,
     /// 注册表是否允许远程桌面(fDenyTSConnections == 0)
     registry_ok: bool,
@@ -2355,6 +2362,18 @@ struct RdpStatus {
     service_running: bool,
     /// 3389 是否在监听
     port_listening: bool,
+    /// 展示用的系统版本, 如 "Windows 10 Pro 26H2"
+    edition: String,
+    /// 是否原生支持远程桌面(家庭版为 false)
+    native_supported: bool,
+    /// 是否安装了 RDP Wrapper
+    wrapper_installed: bool,
+    /// RDP Wrapper 是否在正常监听(wrapper 已装 + 服务运行 + 3389 监听)
+    wrapper_listening: bool,
+    /// rdpwrap.ini 是否声明支持当前 termsrv.dll 版本
+    wrapper_supported: bool,
+    /// termsrv.dll 版本, 如 "10.0.26100.8115"
+    termsrv_version: String,
     /// 面向用户的简短说明(失败时指出具体哪一环)
     message: String,
 }
@@ -2414,25 +2433,224 @@ fn is_port_listening(port: u16) -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(500)).is_ok()
 }
 
+// ---------- 系统环境(静态信息, 进程内缓存一次) ----------
+
+#[cfg(windows)]
+const WINDOWS_CURRENT_VERSION_KEY: &str = r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+
+// 读取 reg query 的单个字符串值。值里可能含空格(如 "Windows 10 Pro"),
+// 所以名字/类型之后的剩余部分整体作为值。
+#[cfg(windows)]
+fn reg_query_value(key: &str, value_name: &str) -> Option<String> {
+    let mut cmd = Command::new("reg");
+    cmd.args(["query", key, "/v", value_name]);
+    hide_window(&mut cmd);
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    for line in text.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() >= 3 && parts[0].eq_ignore_ascii_case(value_name) {
+            let value = parts[2..].join(" ");
+            if !value.is_empty() {
+                return Some(value);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(windows)]
+struct RdpSystemInfo {
+    product_name: String,
+    display_version: String,
+    current_build: String,
+}
+
+#[cfg(windows)]
+fn rdp_system_info() -> &'static RdpSystemInfo {
+    static CACHE: OnceLock<RdpSystemInfo> = OnceLock::new();
+    CACHE.get_or_init(|| RdpSystemInfo {
+        product_name: reg_query_value(WINDOWS_CURRENT_VERSION_KEY, "ProductName")
+            .unwrap_or_default(),
+        display_version: reg_query_value(WINDOWS_CURRENT_VERSION_KEY, "DisplayVersion")
+            .unwrap_or_default(),
+        current_build: reg_query_value(WINDOWS_CURRENT_VERSION_KEY, "CurrentBuild")
+            .unwrap_or_default(),
+    })
+}
+
+// termsrv.dll 版本(形如 "10.0.26100.8115")。只有装了 RDP Wrapper 才需要,
+// 单独惰性缓存: 没装 Wrapper 的机器完全不付 PowerShell 的启动开销(约 300ms)。
+#[cfg(windows)]
+fn termsrv_dll_version() -> &'static str {
+    static CACHE: OnceLock<String> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        let script =
+            r#"(Get-Item -Path "$env:windir\System32\termsrv.dll").VersionInfo.FileVersion"#;
+        let mut cmd = Command::new("powershell.exe");
+        cmd.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+        hide_window(&mut cmd);
+        match cmd.output() {
+            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout)
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .to_string(),
+            _ => String::new(),
+        }
+    })
+}
+
+#[cfg(windows)]
+fn rdp_wrapper_dirs() -> Vec<PathBuf> {
+    let mut directories = vec![
+        PathBuf::from(r"C:\Program Files\RDP Wrapper"),
+        PathBuf::from(r"C:\Program Files (x86)\RDP Wrapper"),
+    ];
+    if let Some(program_files) = env::var_os("ProgramFiles") {
+        directories.push(PathBuf::from(program_files).join("RDP Wrapper"));
+    }
+    if let Some(program_files_x86) = env::var_os("ProgramFiles(x86)") {
+        directories.push(PathBuf::from(program_files_x86).join("RDP Wrapper"));
+    }
+    directories
+}
+
+#[cfg(windows)]
+fn rdp_wrapper_installed() -> bool {
+    rdp_wrapper_dirs()
+        .iter()
+        .any(|directory| directory.join("rdpwrap.dll").exists())
+}
+
+// rdpwrap.ini 全文(静态, 缓存): 用来判断 ini 是否声明支持当前 termsrv.dll
+#[cfg(windows)]
+fn rdp_wrapper_ini() -> &'static Option<String> {
+    static CACHE: OnceLock<Option<String>> = OnceLock::new();
+    CACHE.get_or_init(|| {
+        rdp_wrapper_dirs()
+            .iter()
+            .map(|directory| directory.join("rdpwrap.ini"))
+            .find(|path| path.exists())
+            .and_then(|path| fs::read_to_string(path).ok())
+    })
+}
+
+#[cfg(windows)]
+fn ini_declares_section(contents: &str, version: &str) -> bool {
+    let version = version.trim();
+    if version.is_empty() {
+        return false;
+    }
+    let expected = format!("[{}]", version);
+    contents.lines().any(|line| {
+        line.trim_matches(|character: char| character.is_whitespace() || character == '\u{feff}')
+            == expected
+    })
+}
+
+#[cfg(windows)]
+fn is_non_professional_edition(product_name: &str) -> bool {
+    let edition = product_name.to_ascii_lowercase();
+    ["home", "core", "single language", "s mode"]
+        .iter()
+        .any(|marker| edition.contains(marker))
+}
+
+#[cfg(windows)]
+fn format_windows_edition(product_name: &str, display_version: &str, current_build: &str) -> String {
+    let raw_name = product_name.trim();
+    let build = current_build.trim().parse::<u32>().ok();
+    let is_windows_11 = build.map(|value| value >= 22000).unwrap_or(false);
+
+    let mut name = if is_windows_11 && raw_name.starts_with("Windows 10") {
+        format!("Windows 11{}", &raw_name["Windows 10".len()..])
+    } else if raw_name.is_empty() {
+        if is_windows_11 {
+            "Windows 11".to_string()
+        } else {
+            "Windows（版本未知）".to_string()
+        }
+    } else {
+        raw_name.to_string()
+    };
+
+    let version = display_version.trim();
+    if !version.is_empty() && !name.contains(version) {
+        name.push(' ');
+        name.push_str(version);
+    }
+    name
+}
+
 // ========== 命令: 检测远程桌面(RDP)是否已开启 ==========
-// 保留原布尔返回值给前端旧逻辑使用(仅表示“注册表允许”)。
+// 保留原布尔返回值给前端旧逻辑使用(仅表示"注册表允许")。
 #[cfg(windows)]
 #[tauri::command]
 fn check_rdp_enabled() -> bool {
     matches!(read_rdp_deny_flag(), Some(0))
 }
 
-// ========== 命令: 检测远程桌面(RDP)就绪状态(三重校验, 供界面提示用) ==========
+// ========== 命令: 检测远程桌面(RDP)就绪状态 + 系统环境(供界面展示) ==========
 #[cfg(windows)]
 #[tauri::command]
 fn check_rdp_status() -> RdpStatus {
     let registry_ok = matches!(read_rdp_deny_flag(), Some(0));
     let service_running = is_term_service_running();
     let port_listening = is_port_listening(3389);
-    let ready = registry_ok && service_running && port_listening;
+
+    let system = rdp_system_info();
+    let edition = format_windows_edition(
+        &system.product_name,
+        &system.display_version,
+        &system.current_build,
+    );
+    let native_supported = !is_non_professional_edition(&system.product_name);
+
+    let wrapper_installed = rdp_wrapper_installed();
+    // termsrv 版本与 ini 内容只在装了 Wrapper 时才探测/解析
+    let termsrv_version = if wrapper_installed {
+        termsrv_dll_version().to_string()
+    } else {
+        String::new()
+    };
+    let wrapper_supported = wrapper_installed
+        && rdp_wrapper_ini()
+            .as_deref()
+            .map(|contents| ini_declares_section(contents, &termsrv_version))
+            .unwrap_or(false);
+    let wrapper_listening = wrapper_installed && service_running && port_listening;
+
+    // 专业版走系统自带远程桌面, 家庭版只能指望 RDP Wrapper
+    let ready = if native_supported {
+        registry_ok && service_running && port_listening
+    } else {
+        wrapper_supported && wrapper_listening
+    };
 
     let message = if ready {
-        "远程桌面已就绪".to_string()
+        if native_supported {
+            "远程桌面已就绪".to_string()
+        } else {
+            "RDP Wrapper 已安装并正常监听".to_string()
+        }
+    } else if !native_supported {
+        if !wrapper_installed {
+            "Windows 家庭版不支持系统远程桌面, 建议改用 PrivDesk 自带远程或 WireGuard 内网访问"
+                .to_string()
+        } else {
+            format!(
+                "未确认 RDP Wrapper 与当前系统兼容(termsrv {}), 建议改用 PrivDesk 自带远程或 WireGuard 内网访问",
+                if termsrv_version.is_empty() {
+                    "未知"
+                } else {
+                    termsrv_version.as_str()
+                }
+            )
+        }
     } else if !registry_ok {
         "系统未允许远程桌面, 需开启后再连接".to_string()
     } else if !service_running {
@@ -2446,7 +2664,42 @@ fn check_rdp_status() -> RdpStatus {
         registry_ok,
         service_running,
         port_listening,
+        edition,
+        native_supported,
+        wrapper_installed,
+        wrapper_listening,
+        wrapper_supported,
+        termsrv_version,
         message,
+    }
+}
+
+#[cfg(all(test, windows))]
+mod rdp_capability_tests {
+    use super::{format_windows_edition, ini_declares_section};
+
+    #[test]
+    fn formats_windows_11_from_a_legacy_product_name() {
+        assert_eq!(
+            format_windows_edition("Windows 10 Pro", "25H2", "26200"),
+            "Windows 11 Pro 25H2"
+        );
+    }
+
+    #[test]
+    fn keeps_windows_10_for_pre_windows_11_builds() {
+        assert_eq!(
+            format_windows_edition("Windows 10 Pro", "22H2", "19045"),
+            "Windows 10 Pro 22H2"
+        );
+    }
+
+    #[test]
+    fn detects_termsrv_section_in_wrapper_ini() {
+        let ini = "[Main]\r\nUpdated=2024/03/08\r\n\r\n[10.0.26100.8115]\r\nexthost=1\r\n";
+        assert!(ini_declares_section(ini, "10.0.26100.8115"));
+        assert!(!ini_declares_section(ini, "10.0.19041.1"));
+        assert!(!ini_declares_section(ini, ""));
     }
 }
 
@@ -2477,6 +2730,12 @@ fn check_rdp_status() -> RdpStatus {
         registry_ok: listening,
         service_running: listening,
         port_listening: listening,
+        edition: "macOS".to_string(),
+        native_supported: true,
+        wrapper_installed: false,
+        wrapper_listening: false,
+        wrapper_supported: false,
+        termsrv_version: String::new(),
         message: if listening {
             "屏幕共享已就绪".to_string()
         } else {

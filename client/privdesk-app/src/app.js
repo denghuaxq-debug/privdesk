@@ -381,7 +381,53 @@ function updateTrayColor(accent) {
 }
 
 // ========== 远程桌面检测 ==========
-let lastRdpState = null; // 记录上次状态, 避免重复操作
+let lastRdpState = null; // 记录上次就绪状态, 避免重复操作 DOM
+let lastRdpCapability = null; // 最近一次的完整检测结果(含系统版本/RDP Wrapper)
+
+// 渲染「RDP 环境检测」面板。
+// 只在两种情况下展示: 家庭版(原生不支持远程桌面) 或 装了 RDP Wrapper。
+// 普通专业版用户不关心这些细节, 隐藏即可, 避免干扰主流程。
+function renderRdpCapability(status) {
+  const panel = $("rdp-capability");
+  if (!panel) return;
+  const nativeSupported = !!status.native_supported;
+  const wrapperInstalled = !!status.wrapper_installed;
+  const showCapability = !nativeSupported || wrapperInstalled;
+  panel.classList.toggle("hidden", !showCapability);
+  if (!showCapability) return;
+
+  const wrapperListening = !!status.wrapper_listening;
+  const wrapperSupported = !!status.wrapper_supported;
+  const wrapperReady = wrapperInstalled && wrapperSupported && wrapperListening;
+
+  const edition = $("rdp-edition");
+  if (edition) edition.textContent = status.edition || "未知";
+  const installed = $("rdp-wrapper-installed");
+  if (installed) installed.textContent = wrapperInstalled ? "已安装" : "未安装";
+  const listening = $("rdp-wrapper-listening");
+  if (listening) listening.textContent = wrapperListening ? "正在监听" : "未监听";
+  const supported = $("rdp-wrapper-supported");
+  if (supported) {
+    // 未装 Wrapper 时谈"版本支持"没有意义, 直接显示未安装
+    supported.textContent = wrapperInstalled
+      ? wrapperSupported
+        ? "支持当前版本"
+        : "未确认支持"
+      : "未安装";
+  }
+
+  const recommendation = $("rdp-recommendation");
+  if (recommendation) {
+    if (!nativeSupported) {
+      recommendation.textContent = wrapperReady
+        ? "当前 RDP Wrapper 已确认兼容。优先使用 PrivDesk 自带远程或 WireGuard 内网访问。"
+        : "未确认 RDP Wrapper 与当前系统兼容, 不自动安装第三方组件。建议优先使用 PrivDesk 自带远程或 WireGuard 内网访问。";
+    } else {
+      recommendation.textContent =
+        "Windows 专业版可使用系统自带远程桌面; 也可以通过 PrivDesk 或 WireGuard 内网访问。";
+    }
+  }
+}
 
 async function checkRdp() {
   const invoke = getInvoke();
@@ -395,14 +441,24 @@ async function checkRdp() {
       // 老版本后端没有该命令, 忽略
     }
 
+    if (status) {
+      lastRdpCapability = status;
+      renderRdpCapability(status);
+    }
+
     const ready = status ? !!status.ready : await invoke("check_rdp_enabled");
-    // 状态没变化就不重复操作 DOM
+    // 就绪状态没变化就不重复操作提示条
     if (ready === lastRdpState) return;
     lastRdpState = ready;
 
     if (ready) {
       $("rdp-status").classList.add("hidden");
       $("rdp-ok").classList.remove("hidden");
+      const okText = $("rdp-ok-text");
+      if (okText) {
+        okText.textContent =
+          status && status.message ? status.message : "远程桌面已开启";
+      }
     } else {
       $("rdp-ok").classList.add("hidden");
       $("rdp-status").classList.remove("hidden");
@@ -423,6 +479,20 @@ async function onEnableRdp() {
   if (!invoke) return;
   const btn = $("btn-enable-rdp");
   const restoreText = isMac() ? "去开启" : "一键开启";
+  // 家庭版没有可用的系统远程桌面, 开 fDenyTSConnections 也不会生效。
+  // 不自动下载安装 RDP Wrapper(第三方组件), 只给出建议。
+  if (
+    !isMac() &&
+    lastRdpCapability &&
+    !lastRdpCapability.native_supported
+  ) {
+    const recommendation = $("rdp-recommendation");
+    if (recommendation) {
+      recommendation.textContent =
+        "Windows 家庭版不支持系统远程桌面, 无法通过注册表开启。建议使用 PrivDesk 自带远程或 WireGuard 内网访问。";
+    }
+    return;
+  }
   btn.disabled = true;
   btn.textContent = isMac() ? "打开设置中..." : "开启中...";
   try {
