@@ -385,15 +385,15 @@ let lastRdpState = null; // 记录上次就绪状态, 避免重复操作 DOM
 let lastRdpCapability = null; // 最近一次的完整检测结果(含系统版本/RDP Wrapper)
 
 // 渲染「RDP 环境检测」面板。
-// 展示条件: 家庭版(原生不支持远程桌面) / RDP Wrapper 真正生效 / 目录里只是残留文件。
-// 普通专业版且没有 Wrapper 痕迹时不展示, 避免干扰主流程。
+// 展示条件: 仅当系统原生不支持远程桌面(家庭版 / 精简版等)时才展示, 用来提示安装 RDP Wrapper。
+// 专业版原生就支持远程桌面, 即使目录里留着 Wrapper 残留文件也不展示, 避免干扰主流程。
 function renderRdpCapability(status) {
   const panel = $("rdp-capability");
   if (!panel) return;
   const nativeSupported = !!status.native_supported;
   const wrapperInstalled = !!status.wrapper_installed;
   const wrapperFilesPresent = !!status.wrapper_files_present;
-  const showCapability = !nativeSupported || wrapperInstalled || wrapperFilesPresent;
+  const showCapability = !nativeSupported;
   panel.classList.toggle("hidden", !showCapability);
   if (!showCapability) return;
 
@@ -426,16 +426,19 @@ function renderRdpCapability(status) {
 
   const recommendation = $("rdp-recommendation");
   if (recommendation) {
-    if (!nativeSupported) {
-      recommendation.textContent = wrapperReady
-        ? "当前 RDP Wrapper 已确认兼容。优先使用 PrivDesk 自带远程或 WireGuard 内网访问。"
-        : "未确认 RDP Wrapper 与当前系统兼容, 不自动安装第三方组件。建议优先使用 PrivDesk 自带远程或 WireGuard 内网访问。";
+    // 能走到这里就说明原生不支持远程桌面(家庭版等), 只有装 RDP Wrapper 这条路
+    if (wrapperReady) {
+      recommendation.textContent =
+        "当前 RDP Wrapper 已确认兼容。优先使用 PrivDesk 自带远程或 WireGuard 内网访问。";
+    } else if (wrapperInstalled) {
+      recommendation.textContent =
+        "RDP Wrapper 已安装但未正常监听, 请确认版本支持并重启远程桌面服务。";
     } else if (wrapperFilesPresent) {
       recommendation.textContent =
-        "检测到 RDP Wrapper 残留文件, 但未注册服务或注入, 未生效。专业版无需安装; 如需多会话再手动安装。";
+        "检测到 RDP Wrapper 残留文件, 但未注册服务或注入, 未生效。需要时才手动安装。";
     } else {
       recommendation.textContent =
-        "Windows 专业版可使用系统自带远程桌面; 也可以通过 PrivDesk 或 WireGuard 内网访问。";
+        "系统原生不支持远程桌面, 可安装 RDP Wrapper 后使用。建议优先使用 PrivDesk 自带远程或 WireGuard 内网访问。";
     }
   }
 }

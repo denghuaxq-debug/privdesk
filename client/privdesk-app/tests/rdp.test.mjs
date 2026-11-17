@@ -46,16 +46,22 @@ test("RDP capability is refreshed after a user action, not by installing unknown
   assert.doesNotMatch(rust, /RDPWInst\.exe.*-i/);
 });
 
-test("Capability panel stays hidden for a plain professional edition", () => {
-  // 展示条件是 "家庭版 或 Wrapper 生效 或 目录里有残留文件"; 普通专业版不显示, 避免干扰主流程
+test("Capability panel only shows when the system does not natively support RDP", () => {
+  // 展示条件只有 "原生不支持远程桌面"(家庭版等); 专业版即使有 Wrapper 残留文件也不展示,
+  // 避免在原生可用的机器上提示安装第三方组件。
   const renderStart = app.indexOf("function renderRdpCapability(");
   assert.ok(renderStart >= 0, "renderRdpCapability should exist");
   const renderEnd = app.indexOf("async function checkRdp()", renderStart);
   const renderer = app.slice(renderStart, renderEnd);
-  assert.match(renderer, /native_supported/);
   assert.match(renderer, /wrapper_installed/);
   assert.match(renderer, /showCapability/);
   assert.match(renderer, /classList\.toggle\("hidden"/);
+  // 展示条件不得再包含 wrapper_installed / wrapperFilesPresent
+  assert.match(renderer, /const showCapability = !nativeSupported;/);
+  assert.doesNotMatch(
+    renderer,
+    /const showCapability = !nativeSupported \|\| wrapper/,
+  );
 });
 
 test("Source detection reads ini and only lets RDP Wrapper mean installed when it is installed", () => {
