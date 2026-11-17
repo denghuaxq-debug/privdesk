@@ -4,6 +4,16 @@
 *.exe
 *.dll
 
+# ===== 打包必需的第三方二进制 (例外: 必须进仓库, 否则无法编译) =====
+# Tauri 打包时 tauri.windows.conf.json 的 bundle.resources 会强校验这些文件,
+# 缺失会直接报 "resource path `xxx.exe` doesn't exist" 导致 cargo check 失败。
+# 均为可再分发的开源组件, 许可与源码地址见 src-tauri/licenses/第三方开源声明.txt
+!client/privdesk-app/src-tauri/frpc.exe
+!client/privdesk-app/src-tauri/tvnviewer.exe
+!client/privdesk-app/src-tauri/gost.exe
+!client/privdesk-app/src-tauri/wireguard.exe
+!client/privdesk-app/src-tauri/wg.exe
+
 # ===== frp 二进制 (无后缀, 单独排除) =====
 **/privdesk-server_amd64
 **/privdesk-server_arm64
