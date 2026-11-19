@@ -622,9 +622,10 @@ fn register_unattended_task(
          }}\n\
          $action = New-ScheduledTaskAction -Execute {} -Argument {} -WorkingDirectory {}\n\
          $trigger = New-ScheduledTaskTrigger -AtStartup\n\
+         $watchdog = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1) -RepetitionDuration (New-TimeSpan -Days 3650)\n\
          $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest\n\
-         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew\n\
-         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description 'PrivDesk 无人值守隧道: 开机在用户登录前建立远程连接' | Out-Null\n\
+         $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)\n\
+         Register-ScheduledTask -TaskName $taskName -Action $action -Trigger @($trigger, $watchdog) -Principal $principal -Settings $settings -Description 'PrivDesk 无人值守隧道: 开机在用户登录前建立远程连接' | Out-Null\n\
          Start-ScheduledTask -TaskName $taskName\n\
          Start-Sleep -Seconds 2\n\
          $info = Get-ScheduledTaskInfo -TaskName $taskName\n\

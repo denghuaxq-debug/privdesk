@@ -37,6 +37,36 @@ test("the unattended task runs frpc with a log file and no stdout capture", () =
   assert.match(rust, /无 BOM|no BOM|BOM/);
 });
 
+// frpc 崩溃后如果任务没有重启策略, 只能等下次开机, 人不在机器旁就彻底失联。
+// 两条兜底:
+//   1. RestartOnFailure: 任务以失败码结束时由 Task Scheduler 重启(实测对手动启动的实例不生效)
+//   2. 每分钟一次的重复触发器 + MultipleInstances IgnoreNew: 实例不在就补起来
+//      (实测 15:59:32 实例结束 -> 15:59:33 下一轮就拉起来了)
+test("the unattended task restarts frpc after a crash instead of waiting for the next boot", () => {
+  const registerFn = rust.slice(
+    rust.indexOf("fn register_unattended_task"),
+    rust.indexOf("fn unregister_unattended_task"),
+  );
+  // Task Scheduler 的失败重启策略, 必须和 settings 一起注册进去
+  assert.match(registerFn, /-RestartCount \d+/);
+  assert.match(registerFn, /-RestartInterval \(New-TimeSpan -Minutes \d+\)/);
+  // 重启间隔要短到"人不在也能等", 不能是一小时级
+  const count = Number(registerFn.match(/-RestartCount (\d+)/)[1]);
+  const minutes = Number(registerFn.match(/-RestartInterval \(New-TimeSpan -Minutes (\d+)\)/)[1]);
+  assert.ok(count >= 10, `restart count should be generous, got ${count}`);
+  assert.ok(minutes >= 1 && minutes <= 5, `restart interval should be 1-5 minutes, got ${minutes}`);
+
+  // 看门狗触发器: RestartOnFailure 只管失败退出, 被外部 kill 或静默退出管不到,
+  // 所以必须再加一个周期触发器, 配合 IgnoreNew 做到"不在就补起来, 在就不打扰"
+  assert.match(registerFn, /New-ScheduledTaskTrigger -Once -At \(Get-Date\)/);
+  assert.match(registerFn, /-RepetitionInterval \(New-TimeSpan -Minutes \d+\)/);
+  assert.match(registerFn, /-RepetitionDuration \(New-TimeSpan -Days \d+\)/);
+  // 两个触发器一起注册
+  assert.match(registerFn, /-Trigger @\(\$trigger, \$watchdog\)/);
+  // 必须有 IgnoreNew, 否则每分钟会叠加一个 frpc 抢同一个 remotePort
+  assert.match(registerFn, /-MultipleInstances IgnoreNew/);
+});
+
 test("unattended state is tracked by a marker file because task querying needs admin", () => {
   // 非管理员 schtasks /query 会被拒绝, 所以用 unattended.json 记录状态
   assert.match(rust, /struct UnattendedState/);
