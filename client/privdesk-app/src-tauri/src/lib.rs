@@ -3370,6 +3370,15 @@ pub fn run() {
             start_full_tunnel_client
         ])
         .setup(|app| {
+            // ---------- 登录自启路径自愈 ----------
+            // 装新版本或换了安装目录后, HKCU\...\Run 里的值可能还指向旧的 exe 路径。
+            // 只要开关仍是开启状态(is_enabled 为 true), 就用当前进程路径重写一次,
+            // 保证下次登录拉起的永远是现在这个可执行文件。
+            #[cfg(windows)]
+            if app.autolaunch().is_enabled().unwrap_or(false) {
+                let _ = app.autolaunch().enable();
+            }
+
             // ---------- 创建系统托盘 ----------
             let show_item = MenuItem::with_id(app, "show", "打开主界面", true, None::<&str>)?;
             let quit_item = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;

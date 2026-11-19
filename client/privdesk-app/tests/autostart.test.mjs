@@ -108,3 +108,16 @@ test("the footer has a dedicated launch-at-login switch", () => {
   assert.match(app, /invoke\("set_launch_at_login"/);
   assert.match(app, /invoke\("get_launch_at_login"\)/);
 });
+
+// 装新版本会换安装目录, 老 Run 键会指向已经不存在的 exe。
+// 启动时如果开关还开着, 就用当前进程路径重写一次, 保证登录后拉起的是新版本。
+test("launch-at-login rewrites a stale Run key with the current exe path", () => {
+  const setupIdx = rust.indexOf(".setup(|app| {");
+  assert.ok(setupIdx > 0, "run() should have a setup hook");
+  const setupHead = rust.slice(setupIdx, setupIdx + 900);
+  assert.match(setupHead, /app\.autolaunch\(\)\.is_enabled\(\)/);
+  assert.match(setupHead, /app\.autolaunch\(\)\.enable\(\)/);
+  assert.match(setupHead, /#\[cfg\(windows\)\]/);
+  // 自愈只能发生在 setup 里, 不能混进无人值守的注册/注销逻辑
+  assert.doesNotMatch(setupHead, /New-ScheduledTaskPrincipal/);
+});
