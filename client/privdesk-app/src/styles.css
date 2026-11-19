@@ -440,8 +440,8 @@ input::placeholder {
   background: var(--card);
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 20px;
+  gap: 12px;
+  padding: 0 16px;
 }
 .checkbox {
   display: flex;

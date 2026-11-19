@@ -16,8 +16,16 @@ test("Windows unattended mode uses a SYSTEM startup task, not the login-only Run
   assert.match(rust, /New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount/);
   assert.match(rust, /-RunLevel Highest/);
   assert.match(rust, /Register-ScheduledTask/);
-  // Windows 分支不再依赖 autolaunch(即 Run 键)
-  assert.match(rust, /#\[cfg\(not\(windows\)\)\]\s*use tauri_plugin_autostart::ManagerExt;/);
+  // 无人值守注册函数本身不能依赖 autolaunch(即 Run 键)
+  const registerFn = rust.slice(
+    rust.indexOf("fn register_unattended_task"),
+    rust.indexOf("fn unregister_unattended_task"),
+  );
+  assert.doesNotMatch(registerFn, /autolaunch/);
+  // set_autostart 的 Windows 分支也必须是计划任务, autolaunch 只出现在非 Windows 分支
+  const setFn = rust.slice(rust.indexOf("fn set_autostart"), rust.indexOf("fn read_profile_params"));
+  assert.match(setFn, /#\[cfg\(not\(windows\)\)\]/);
+  assert.match(setFn, /register_unattended_task/);
 });
 
 test("the unattended task runs frpc with a log file and no stdout capture", () => {
@@ -66,4 +74,37 @@ test("the footer explains that unattended mode works without logging in", () => 
   assert.match(index, /id="cb-autostart"/);
   assert.match(index, /无人值守/);
   assert.match(index, /停在登录界面/);
+});
+
+// "登录自启"与"无人值守"是两件独立的事, 不能共用一个开关:
+// 无人值守负责 SYSTEM 计划任务建隧道(登录前), 登录自启只负责登录后把界面拉起来。
+test("launch-at-login is a separate command from the unattended tunnel", () => {
+  assert.match(rust, /fn set_launch_at_login/);
+  assert.match(rust, /fn get_launch_at_login/);
+  // 两个命令都要注册到 invoke_handler
+  assert.match(rust, /set_launch_at_login,\s*\n\s*get_launch_at_login,/);
+  // 登录自启走 autolaunch(Windows 即登录后由资源管理器触发的 Run 键)
+  const launchFn = rust.slice(
+    rust.indexOf("fn set_launch_at_login"),
+    rust.indexOf("fn get_launch_at_login"),
+  );
+  assert.match(launchFn, /app\.autolaunch\(\)/);
+  assert.doesNotMatch(launchFn, /New-ScheduledTaskTrigger/);
+  // 无人值守那侧仍然不依赖 Run 键
+  const unattendedFn = rust.slice(
+    rust.indexOf("fn register_unattended_task"),
+    rust.indexOf("fn unregister_unattended_task"),
+  );
+  assert.match(unattendedFn, /New-ScheduledTaskTrigger -AtStartup/);
+  assert.doesNotMatch(unattendedFn, /app\.autolaunch\(\)/);
+});
+
+test("the footer has a dedicated launch-at-login switch", () => {
+  assert.match(index, /id="cb-launch-at-login"/);
+  assert.match(index, /登录自启/);
+  // 文案要让用户分清它只管界面
+  assert.match(index, /只管界面/);
+  assert.match(app, /function initLaunchAtLogin/);
+  assert.match(app, /invoke\("set_launch_at_login"/);
+  assert.match(app, /invoke\("get_launch_at_login"\)/);
 });

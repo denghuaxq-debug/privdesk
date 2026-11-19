@@ -212,6 +212,9 @@ function bindEvents() {
   // ---------- 开机自启 ----------
   initAutostart();
 
+  // ---------- 登录自启 ----------
+  initLaunchAtLogin();
+
   // ---------- 加载本地缓存的连接信息 ----------
   loadProfile().then(() => {
     setTimeout(() => { maybeAutoConnect().catch(e => console.error(e)); }, 1000);
@@ -298,6 +301,27 @@ function bindEvents() {
     }
   });
 
+  // ---------- 登录自启: 登录进桌面后自动打开界面 ----------
+  $("cb-launch-at-login").addEventListener("change", async (e) => {
+    const invoke = getInvoke();
+    if (!invoke) return;
+    const wanted = e.target.checked;
+    try {
+      const result = await invoke("set_launch_at_login", { enable: wanted });
+      if (!result || !result.ok) {
+        e.target.checked = !wanted;
+        setStatus("error", (result && result.message) || "设置登录自启失败");
+        return;
+      }
+      const label = $("lb-launch-at-login");
+      if (label) label.title = result.message;
+    } catch (err) {
+      console.error("set_launch_at_login", err);
+      e.target.checked = !wanted;
+      setStatus("error", "设置登录自启失败");
+    }
+  });
+
   // ---------- 控制端: 模式切换 / 系统选择 / 开始远程 ----------
   initController();
 }
@@ -313,6 +337,24 @@ async function initAutostart() {
     } catch (e) {
       console.error("get_autostart", e);
     }
+  }
+}
+
+// 启动时读取登录自启的真实状态, 同步到复选框
+async function initLaunchAtLogin() {
+  const invoke = getInvoke();
+  if (!invoke) return;
+  try {
+    const enabled = await invoke("get_launch_at_login");
+    $("cb-launch-at-login").checked = !!enabled;
+    const label = $("lb-launch-at-login");
+    if (label) {
+      label.title = enabled
+        ? "已开启: 登录进桌面时自动打开界面"
+        : "开启后: 登录进桌面时自动打开这个界面(只管界面, 隧道已由无人值守负责)";
+    }
+  } catch (e) {
+    console.error("get_launch_at_login", e);
   }
 }
 

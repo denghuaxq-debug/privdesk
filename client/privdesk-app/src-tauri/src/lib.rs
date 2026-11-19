@@ -16,8 +16,8 @@ use tauri::{
     tray::{TrayIconBuilder, TrayIconEvent},
     Manager,
 };
-// 开机自启(无人值守)在 Windows 上改用计划任务实现, 不再依赖 Run 键
-#[cfg(not(windows))]
+// 开机自启(无人值守)在 Windows 上改用计划任务实现, 不再依赖 Run 键;
+// 但"登录时自启界面"仍走 Run 键(用户登录后由资源管理器拉起), 所以这里无条件引入
 use tauri_plugin_autostart::ManagerExt;
 
 // ---------- 全局状态 ----------
@@ -772,6 +772,42 @@ fn get_autostart(app: tauri::AppHandle) -> bool {
     {
         app.autolaunch().is_enabled().unwrap_or(false)
     }
+}
+
+// ========== 命令: 登录时自动打开界面 ==========
+// 与"无人值守"是两件事:
+//   - 无人值守: 开机即由 SYSTEM 计划任务建隧道, 停在登录界面也能远程连入(不需要有人登录)
+//   - 登录自启: 用户登录进桌面后, 自动把 PrivDesk 界面拉起来(纯界面便利, 不影响隧道)
+// Windows 走 HKCU/HKLM 的 Run 键(auto-launch 的 Dynamic 模式: 有权限写 HKLM, 否则回落 HKCU),
+// macOS 走 LaunchAgent。
+#[tauri::command]
+fn set_launch_at_login(app: tauri::AppHandle, enable: bool) -> AutostartResult {
+    let manager = app.autolaunch();
+    let result = if enable {
+        manager.enable()
+    } else {
+        manager.disable()
+    };
+    match result {
+        Ok(()) => AutostartResult {
+            ok: true,
+            message: if enable {
+                "已开启: 登录进桌面后自动打开界面".into()
+            } else {
+                "已关闭: 登录后不再自动打开界面".into()
+            },
+        },
+        Err(err) => AutostartResult {
+            ok: false,
+            message: format!("设置登录自启失败: {}", err),
+        },
+    }
+}
+
+// ========== 命令: 查询登录自启状态 ==========
+#[tauri::command]
+fn get_launch_at_login(app: tauri::AppHandle) -> bool {
+    app.autolaunch().is_enabled().unwrap_or(false)
 }
 
 // ========== 命令: 保存连接信息到本地 ==========
@@ -3312,6 +3348,8 @@ pub fn run() {
             is_connected,
             set_autostart,
             get_autostart,
+            set_launch_at_login,
+            get_launch_at_login,
             save_profile,
             load_profile,
             update_tray_color,
