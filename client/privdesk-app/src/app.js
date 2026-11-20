@@ -383,6 +383,7 @@ function setAutostartHint(enabled, message) {
 // ========== 主题切换 ==========
 function initTheme() {
   // 读取保存的主题(默认: 纯黑 + 纯黑主题色)
+
   const theme = localStorage.getItem("pd-theme") || "black";
   const accent = localStorage.getItem("pd-accent") || "black";
   applyTheme(theme, accent);

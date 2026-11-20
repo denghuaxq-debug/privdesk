@@ -63,7 +63,7 @@ jobs:
           lipo -info src-tauri/frpc
 
       - name: 构建 PrivDesk (universal .dmg)
-        run: npx tauri build --target universal-apple-darwin
+        run: npx tauri build --target universal-apple-darwin --verbose
 
       - name: 收集产物
         run: |

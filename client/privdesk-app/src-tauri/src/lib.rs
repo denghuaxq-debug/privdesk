@@ -3174,18 +3174,68 @@ mod unattended_tests {
         assert_eq!(parsed.remote, "9680");
         assert_eq!(parsed.protocol.as_deref(), Some("tcp"));
     }
+// 用 TCP 连接判断本机某端口是否处于监听状态 (类 Unix / macOS)
+// 说明: 这是最可靠的方式 —— 完全不依赖外部命令(不受 GUI 无 PATH 影响)、
+//       不受端口属主/权限限制。能建立连接即说明该端口正在被监听。
+//       macOS 屏幕共享开启后, screensharingd 会监听 5900, 本机可直接连上。
+#[cfg(not(windows))]
+fn port_listening(port: u16) -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    // 优先连 IPv4 回环, 再试 IPv6 回环
+    let targets = [
+        SocketAddr::from(([127, 0, 0, 1], port)),
+        SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], port)),
+    ];
+    for addr in targets {
+        if TcpStream::connect_timeout(&addr, Duration::from_millis(400)).is_ok() {
+            return true;
+        }
+    }
+    false
+}
+
+// 用 netstat 检查本机某端口是否处于 TCP LISTEN 状态 (退路)
+// macOS 上 netstat 位于 /usr/sbin/netstat, 用绝对路径避免 GUI 无 PATH 找不到。
+#[cfg(not(windows))]
+fn port_listening_netstat(port: u16) -> bool {
+    let suffix = format!(".{}", port); // 本地地址列形如 *.5900 / 127.0.0.1.5900
+    if let Ok(o) = Command::new("/usr/sbin/netstat")
+        .args(["-an", "-p", "tcp"])
+        .output()
+    {
+        let s = String::from_utf8_lossy(&o.stdout);
+        for line in s.lines() {
+            let cols: Vec<&str> = line.split_whitespace().collect();
+            // 列: Proto Recv-Q Send-Q Local-Address Foreign-Address (state)
+            if cols.last() == Some(&"LISTEN") {
+                if let Some(local) = cols.get(3) {
+                    if local.ends_with(&suffix) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 // ========== 命令: 检测屏幕共享(VNC 5900)是否已开启 (macOS) ==========
 #[cfg(not(windows))]
 #[tauri::command]
 fn check_rdp_enabled() -> bool {
-    // macOS: 屏幕共享开启后会有进程监听 5900 端口
-    // 用 lsof 检查本机 5900 是否处于监听状态
-    let out = Command::new("lsof")
+    // 主检测: 直接 TCP 连本机端口(最可靠, 不依赖外部命令/权限)
+    if port_listening(LOCAL_PORT) {
+        return true;
+    }
+    // 退路 1: netstat 列出全系统监听端口(绝对路径)
+    if port_listening_netstat(LOCAL_PORT) {
+        return true;
+    }
+    // 退路 2: lsof(macOS 位于 /usr/bin/lsof, 绝对路径)
+    if let Ok(o) = Command::new("/usr/bin/lsof")
         .args(["-nP", "-iTCP:5900", "-sTCP:LISTEN"])
-        .output();
-    if let Ok(o) = out {
+        .output()
+    {
         if o.status.success() && !o.stdout.is_empty() {
             return true;
         }
