@@ -3174,6 +3174,8 @@ mod unattended_tests {
         assert_eq!(parsed.remote, "9680");
         assert_eq!(parsed.protocol.as_deref(), Some("tcp"));
     }
+}
+
 // 用 TCP 连接判断本机某端口是否处于监听状态 (类 Unix / macOS)
 // 说明: 这是最可靠的方式 —— 完全不依赖外部命令(不受 GUI 无 PATH 影响)、
 //       不受端口属主/权限限制。能建立连接即说明该端口正在被监听。

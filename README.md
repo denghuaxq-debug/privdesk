@@ -65,4 +65,4 @@ cd client/privdesk-app && npx tauri build --target universal-apple-darwin
 ---
 本项目基于 [frp](https://github.com/fatedier/frp) (Apache 2.0) 构建。
 
-PRIVDESK-eyJzZXJ2ZXIiOiIxMjMuMjA3LjI1MS4xMDUiLCJwb3J0IjoiNjAwMCIsInRva2VuIjoiZ0o1Z2lPYXU1NjJzSVF2VXpJSWpCUWF2R1ZQUXltaCIsInJlbW90ZSI6Ijk2ODAifQ==
+> 注意：连接码（`PRIVDESK-...`）内含服务端 auth token，等同于密码，**请勿提交到仓库或发给不可信的人**。

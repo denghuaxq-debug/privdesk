@@ -1,0 +1,99 @@
+name: Build Windows (.exe)
+
+# 在 GitHub 的 Windows 云主机上构建 PrivDesk 的 Windows 安装包 (.exe)。
+# 触发方式:
+#   1. 手动: Actions 页面点 "Run workflow"
+#   2. 打 tag: 形如 v1.2.0 的 tag 推送后自动构建并发布到 Release
+#
+# 产物为未签名的 NSIS 安装包 (currentUser 模式, 装到 %LOCALAPPDATA%\PrivDesk)。
+# 未做代码签名, 用户首次运行会被 SmartScreen 拦一次, 点"更多信息 → 仍要运行"放行。
+#
+# 注意: 安装包需要 5 个第三方二进制 (frpc.exe / tvnviewer.exe / gost.exe /
+#       wireguard.exe / wg.exe)。这些文件已用 .gitignore 例外规则提交进仓库,
+#       所以 CI 上无需额外下载, 直接 checkout 就有。
+
+on:
+  workflow_dispatch: {}
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: client/privdesk-app
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 缓存 Cargo 构建
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: client/privdesk-app/src-tauri
+
+      - name: 安装 Node 依赖
+        run: npm install
+
+      - name: 校验打包所需的第三方二进制
+        shell: pwsh
+        run: |
+          $required = @(
+            'src-tauri/frpc.exe',
+            'src-tauri/tvnviewer.exe',
+            'src-tauri/gost.exe',
+            'src-tauri/wireguard.exe',
+            'src-tauri/wg.exe'
+          )
+          $missing = @()
+          foreach ($f in $required) {
+            if (-not (Test-Path $f)) {
+              $missing += $f
+            } else {
+              $size = (Get-Item $f).Length
+              Write-Host "OK  $f  ($([math]::Round($size/1MB,2)) MB)"
+            }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Host "缺少打包必需的二进制: $($missing -join ', ')"
+            exit 1
+          }
+
+      - name: 构建 PrivDesk (.exe)
+        run: npx tauri build --verbose
+
+      - name: 收集产物
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path ../../dist-windows | Out-Null
+          $setups = Get-ChildItem -Path src-tauri/target/release/bundle/nsis -Filter *.exe
+          if (-not $setups) {
+            Write-Host "未找到 NSIS 安装包"
+            exit 1
+          }
+          foreach ($s in $setups) {
+            Copy-Item $s.FullName ../../dist-windows/
+            Write-Host "已收集 $($s.Name)  ($([math]::Round($s.Length/1MB,2)) MB)"
+          }
+          Get-ChildItem ../../dist-windows | Format-Table Name, Length
+
+      - name: 上传构建工件
+        uses: actions/upload-artifact@v4
+        with:
+          name: PrivDesk-Windows-setup
+          path: dist-windows/*.exe
+          if-no-files-found: error
+
+      - name: 发布到 Release (仅打 tag 时)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-windows/*.exe
